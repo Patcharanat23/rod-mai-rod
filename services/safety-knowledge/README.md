@@ -1,7 +1,7 @@
 # safety-knowledge (โมดูล 9)
 
 **หน้าที่**: คลังความรู้ด้านความปลอดภัย (Disaster RAG) ค้นคำแนะนำจากเอกสาร และตอบคำแนะนำฉุกเฉิน + เบอร์ติดต่อตามชนิดภัย
-**ผู้รับผิดชอบ**: TBD
+**ผู้รับผิดชอบ**: Phitphibul Phrompheak (@phitphibul67)
 **branch**: `feature/safety-knowledge/<ชื่อ>`
 **endpoint**: `POST /api/v1/safety/search`, `GET /api/v1/safety/emergency` (`docs/CONTRACT.md` หัวข้อ 6)
 **เรียกใคร**: ไม่มี (อ่านไฟล์ใน `knowledge/` เท่านั้น)

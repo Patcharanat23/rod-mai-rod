@@ -1,7 +1,7 @@
 # weather-disaster (โมดูล 6)
 
 **หน้าที่**: รวมข้อมูลพยากรณ์อากาศและภัยพิบัติจากหลายแหล่ง แปลงให้อยู่ในรูปแบบเดียวกัน แล้ว cache
-**ผู้รับผิดชอบ**: TBD
+**ผู้รับผิดชอบ**: Pathumporn Jorrapong (@pathumpornjorrapong-ops)
 **branch**: `feature/weather-disaster/<ชื่อ>`
 **endpoint**: `POST /api/v1/forecast/points`, `GET /api/v1/area`, `GET /api/v1/hazards` (`docs/CONTRACT.md` หัวข้อ 6)
 **เรียกใคร**: Open-Meteo, GDACS, USGS, Thaiwater (ถ้าได้ key), TMD (ถ้าได้ key)

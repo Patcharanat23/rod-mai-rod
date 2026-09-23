@@ -39,15 +39,15 @@ make smoke     # ไล่เส้นหลัก login > สร้างทร
 
 | # | โมดูล | โฟลเดอร์ | พอร์ตบนเครื่อง | ผู้รับผิดชอบ |
 |---|---|---|---|---|
-| 1 | Frontend: โครงเว็บ + Login + Overview | `apps/web/app/overview/` | 3000 | เจ้าของโปรเจกต์ |
-| 2 | Frontend: My Trip | `apps/web/app/my-trip/` | 3000 | TBD |
-| 3 | Frontend: Safety Map + หน้าแชท | `apps/web/app/safety-map/`, `apps/web/app/assistant/` | 3000 | TBD |
-| 4 | API Gateway + Auth + ฐานข้อมูล | `services/api-backend/` | 8001 | TBD |
-| 5 | Routing Engine | `services/routing-engine/` | 8002 | TBD |
-| 6 | Weather & Disaster | `services/weather-disaster/` | 8003 | TBD |
-| 7 | Risk & Decision | `services/risk-decision/` | 8004 | TBD |
-| 8 | Assistant Agent | `services/assistant-agent/` | 8005 | TBD |
-| 9 | Safety Knowledge (คำแนะนำความปลอดภัย + ฉุกเฉิน) | `services/safety-knowledge/` | 8006 | TBD |
+| 1 | Frontend: โครงเว็บ + Login + Overview | `apps/web/app/overview/` | 3000 | Patcharanat Budploy (@Patcharanat23) |
+| 2 | Frontend: My Trip | `apps/web/app/my-trip/` | 3000 | Jirapa Gongmool (@jirapa-gm) |
+| 3 | Frontend: Safety Map + หน้าแชท | `apps/web/app/safety-map/`, `apps/web/app/assistant/` | 3000 | Suphakorn Nonthong (@SoSick41) |
+| 4 | API Gateway + Auth + ฐานข้อมูล | `services/api-backend/` | 8001 | Karmolputh Phatarathorn (@Chakamon02) |
+| 5 | Routing Engine | `services/routing-engine/` | 8002 | Pitchakorn Phuadkhunthod (@pitchakorn-pkt) |
+| 6 | Weather & Disaster | `services/weather-disaster/` | 8003 | Pathumporn Jorrapong (@pathumpornjorrapong-ops) |
+| 7 | Risk & Decision | `services/risk-decision/` | 8004 | Jakkrich Sriraksa (@jakkrich0912-web) |
+| 8 | Assistant Agent | `services/assistant-agent/` | 8005 | Patcharanat Budploy (@Patcharanat23) |
+| 9 | Safety Knowledge (คำแนะนำความปลอดภัย + ฉุกเฉิน) | `services/safety-knowledge/` | 8006 | Phitphibul Phrompheak (@phitphibul67) |
 
 ## Git flow สรุปสั้น
 

@@ -1,6 +1,6 @@
 # /my-trip (โมดูล 2)
 
-**ผู้รับผิดชอบ**: TBD
+**ผู้รับผิดชอบ**: Jirapa Gongmool (@jirapa-gm)
 **สเปก**: `docs/SPEC.md` หน้า 2 · **endpoint ที่ใช้**: `trips` (list/create/get/patch/delete), `trips/{id}/plan`, `weather/area`
 ใช้ `MapView`, `RiskBadge`, `formatThaiTime`, `api.ts` จาก `shared/` ห้ามทำตัวเองซ้ำ
 

@@ -1,7 +1,7 @@
 # routing-engine (โมดูล 5)
 
 **หน้าที่**: หาเส้นทางจากต้นทางผ่านหมุดไปปลายทาง, คำนวณเวลาที่ไปถึงแต่ละจุด, และถ้าเส้นหลักเสี่ยงหรือมีทางเลือก ต้องหาเส้นที่ปลอดภัยกว่าหรือเร็วกว่ามาเสนอ
-**ผู้รับผิดชอบ**: TBD
+**ผู้รับผิดชอบ**: Pitchakorn Phuadkhunthod (@pitchakorn-pkt)
 **branch**: `feature/routing-engine/<ชื่อ>`
 **endpoint**: `POST /api/v1/routes/plan` (`docs/CONTRACT.md` หัวข้อ 6)
 **เรียกใคร**: routing API ภายนอก (OSRM เป็นหลัก, openrouteservice / Longdo สำรอง), risk-decision
