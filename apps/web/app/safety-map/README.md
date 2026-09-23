@@ -1,6 +1,6 @@
 # /safety-map (โมดูล 3)
 
-**ผู้รับผิดชอบ**: TBD (คนเดียวกับ `/assistant`)
+**ผู้รับผิดชอบ**: Suphakorn Nonthong (@SoSick41) (คนเดียวกับ `/assistant`)
 **สเปก**: `docs/SPEC.md` หน้า 3 · **endpoint ที่ใช้**: `hazards`
 
 ## จุดที่คนส่วนใหญ่พลาด

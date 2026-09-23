@@ -40,6 +40,7 @@ login ด้วยอีเมลอะไรก็ได้ รหัสผ่�
 | `time.ts` | `formatThaiTime`, `formatDuration`, `thaiInputToUtc` (ค่าจาก datetime-local เป็น UTC), `utcToThaiInput` |
 | `useLocation.ts` | ตำแหน่งผู้ใช้ ไม่อนุญาตหรือรอเกิน 5 วิ ใช้กรุงเทพ |
 | `AreaWeather.tsx` | การ์ดแผนที่ + อากาศแบบ area ใช้ตอนไม่มีทริป |
+| `EmergencyCard.tsx` | `<EmergencyCard hazardType="FLOOD" />` คำแนะนำฉุกเฉิน + ปุ่มโทร ใช้เมื่อเป็น HIGH |
 | `types.ts` | ชนิดข้อมูลตาม CONTRACT |
 
 **ถ้าเปลี่ยน props ของ component ใน `shared/` ต้องแจ้งเจ้าของโมดูล 2 และ 3 ก่อน** ไม่งั้นหน้าเขาพังตอน merge

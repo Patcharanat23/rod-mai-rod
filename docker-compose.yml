@@ -79,5 +79,13 @@ services:
     ports:
       - "8005:8000"
 
+  safety-knowledge:
+    <<: *python-service
+    build: ./services/safety-knowledge
+    environment:
+      SERVICE_NAME: safety-knowledge
+    ports:
+      - "8006:8000"
+
 volumes:
   pgdata:

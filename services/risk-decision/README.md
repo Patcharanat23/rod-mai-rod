@@ -1,7 +1,7 @@
 # risk-decision (โมดูล 7)
 
 **หน้าที่**: รับจุดบนเส้นทางพร้อมเวลาไปถึง ดึงพยากรณ์ ณ เวลานั้น คิดระดับความเสี่ยงรายจุดและทั้งเส้น แล้วตัดสิน recommendation
-**ผู้รับผิดชอบ**: TBD
+**ผู้รับผิดชอบ**: Jakkrich Sriraksa (@jakkrich0912-web)
 **branch**: `feature/risk-decision/<ชื่อ>`
 **endpoint**: `POST /api/v1/risk/evaluate` (`docs/CONTRACT.md` หัวข้อ 6)
 **เรียกใคร**: weather-disaster

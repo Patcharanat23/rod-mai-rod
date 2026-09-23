@@ -12,7 +12,7 @@
 สร้างห้องตามนี้ (ตั้งชื่อห้องให้ตรงกับ module-slug จะได้ไม่งง):
 - `#pr-updates`, `#task-assignment` (ทุกคนเห็น)
 - `#pr-web-overview`, `#pr-web-mytrip`, `#pr-web-safety-assistant`
-- `#pr-api-backend`, `#pr-routing-engine`, `#pr-weather-disaster`, `#pr-risk-decision`, `#pr-assistant-agent`
+- `#pr-api-backend`, `#pr-routing-engine`, `#pr-weather-disaster`, `#pr-risk-decision`, `#pr-assistant-agent`, `#pr-safety-knowledge`
 
 ## ขั้นที่ 2 - ต่อ `#pr-updates` กับ GitHub (ไม่ต้องเขียนโค้ด)
 
@@ -22,7 +22,7 @@
 
 ## ขั้นที่ 3 - ห้องส่วนตัวแต่ละโมดูลแจ้งผลรีวิวอัตโนมัติ
 
-ทำซ้ำ 8 รอบ (หนึ่งรอบต่อหนึ่งโมดูล):
+ทำซ้ำ 9 รอบ (หนึ่งรอบต่อหนึ่งโมดูล):
 
 1. เข้าห้องโมดูลนั้น → Edit Channel → Integrations → Webhooks → New Webhook → Copy URL (**ไม่ต้อง** เติม `/github`)
 2. GitHub repo → Settings → Secrets and variables → Actions → New repository secret

@@ -17,6 +17,7 @@ app = FastAPI(title="assistant-agent")
 setup(app, "assistant-agent")
 
 BACKEND_TIMEOUT = 60  # วินาที ตาม CONTRACT หัวข้อ 3 (PATCH แล้วอาจต้อง /plan ต่อ)
+SAFETY_TIMEOUT = 10
 BANGKOK = ZoneInfo("Asia/Bangkok")
 
 
@@ -30,6 +31,17 @@ def backend(method: str, path: str, authorization: str, json=None):
     ถ้า api-backend ปฏิเสธจะ raise ApiError ห้ามตอบผู้ใช้ว่าสำเร็จในกรณีนั้น"""
     return call("API_BACKEND_URL", method, path, timeout=BACKEND_TIMEOUT, json=json,
                 headers={"Authorization": authorization})
+
+
+def safety_search(query: str, hazard_types: Optional[list[str]] = None) -> list[dict]:
+    """คำแนะนำความปลอดภัยจากเอกสารจริง ใช้ตอบคำถามแบบ "น้ำท่วมต้องทำยังไง" แทนให้ LLM แต่งเอง
+    คืน [] ถ้าค้นไม่เจอหรือ safety-knowledge ล่ม ส่ง source ไปให้ LLM อ้างอิงด้วย"""
+    try:
+        data = call("SAFETY_KNOWLEDGE_URL", "POST", "/api/v1/safety/search", timeout=SAFETY_TIMEOUT,
+                    json={"query": query, "hazard_types": hazard_types or []})
+    except ApiError:
+        return []
+    return data["results"]
 
 
 def now_bangkok() -> datetime:

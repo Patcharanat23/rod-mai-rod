@@ -105,3 +105,9 @@ export type ChatAction = {
 };
 
 export type ChatReply = { reply: string; actions: ChatAction[]; warnings: Warning[] };
+
+export type Emergency = {
+  hazard_type: HazardType;
+  steps_th: string[];
+  contacts: { name_th: string; phone: string }[];
+};

@@ -26,6 +26,7 @@ MAX_WAYPOINTS = 5
 ROUTING_TIMEOUT = 45
 WEATHER_TIMEOUT = 10
 ASSISTANT_TIMEOUT = 100
+SAFETY_TIMEOUT = 10
 
 
 class Place(BaseModel):
@@ -211,6 +212,15 @@ def hazards(min_lat: float, min_lng: float, max_lat: float, max_lng: float, auth
                        params={"min_lat": min_lat, "min_lng": min_lng, "max_lat": max_lat, "max_lng": max_lng}))
     except ApiError:
         return ok({"hazards": [], "warnings": ["HAZARD_FEED_UNAVAILABLE"]})
+
+
+# ---------- safety ----------
+
+@app.get("/api/v1/safety/emergency")
+def safety_emergency(hazard_type: str, authorization: Optional[str] = Header(None)):
+    current_user(authorization)
+    return ok(call("SAFETY_KNOWLEDGE_URL", "GET", "/api/v1/safety/emergency", timeout=SAFETY_TIMEOUT,
+                   params={"hazard_type": hazard_type}))
 
 
 # ---------- assistant ----------

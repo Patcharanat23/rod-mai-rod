@@ -1,10 +1,10 @@
 # api-backend (โมดูล 4)
 
 **หน้าที่**: ประตูเดียวที่ frontend คุยด้วย ดูแล login/JWT, ฐานข้อมูลผู้ใช้และทริป, และส่งต่องานไป routing-engine / weather-disaster / assistant-agent
-**ผู้รับผิดชอบ**: TBD
+**ผู้รับผิดชอบ**: Karmolputh Phatarathorn (@Chakamon02)
 **branch**: `feature/api-backend/<ชื่อ>`
 **endpoint ที่ต้องมี**: ทั้งชุด api-backend ใน `docs/CONTRACT.md` หัวข้อ 6 (stub ตอนนี้ตอบครบทุกเส้นแล้ว แทนทีละเส้น)
-**เรียกใคร**: postgres, routing-engine, weather-disaster, assistant-agent
+**เรียกใคร**: postgres, routing-engine, weather-disaster, assistant-agent, safety-knowledge
 **ใครเรียกเรา**: frontend, assistant-agent (เรียกกลับมาแก้ทริป)
 
 ## รันเดี่ยว

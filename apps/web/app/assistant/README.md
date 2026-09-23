@@ -1,6 +1,6 @@
 # /assistant (โมดูล 3)
 
-**ผู้รับผิดชอบ**: TBD (คนเดียวกับ `/safety-map`)
+**ผู้รับผิดชอบ**: Suphakorn Nonthong (@SoSick41) (คนเดียวกับ `/safety-map`)
 **สเปก**: `docs/SPEC.md` หน้า 4 · **endpoint ที่ใช้**: `assistant/chat`
 หน้านี้แค่แสดงแชท การตัดสินใจทั้งหมดอยู่ที่ assistant-agent (โมดูล 8)
 

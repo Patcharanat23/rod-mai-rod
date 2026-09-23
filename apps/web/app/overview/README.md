@@ -1,6 +1,6 @@
 # /login และ /overview (โมดูล 1)
 
-**ผู้รับผิดชอบ**: TBD
+**ผู้รับผิดชอบ**: Patcharanat Budploy (@Patcharanat23)
 **สเปก**: `docs/SPEC.md` หน้า 1 · **endpoint ที่ใช้**: `auth/login`, `auth/register`, `me`, `trips/upcoming`, `trips/{id}`, `weather/area`
 นอกจากสองหน้านี้ โมดูล 1 ดูแลโครงเว็บ (เมนู 4 แท็บ, layout) และของกลางใน `shared/` ตาม `apps/web/README.md`
 

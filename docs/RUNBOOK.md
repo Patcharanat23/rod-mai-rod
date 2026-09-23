@@ -33,6 +33,7 @@
 | container ล้มแล้วขึ้นเองไม่ได้ | `make logs` ดูตัวที่ล้ม หา request_id ของคำขอที่พังแล้วไล่ log ทีละ service |
 | risk-decision ล่ม | routing-engine ยังส่งเส้นทางกลับไปได้ ระดับความเสี่ยงไม่ทราบ ใส่ `WEATHER_UNAVAILABLE` ห้ามใส่ LOW เอง |
 | routing-engine ล่ม | หน้า My Trip แสดง error พร้อมปุ่มลองใหม่ หน้าอื่นต้องใช้ได้ตามปกติ |
+| safety-knowledge ล่ม | แชทยังตอบได้แต่ไม่มีคำแนะนำจากเอกสาร (`safety_search()` คืน `[]`) หน้าเว็บซ่อนการ์ดคำแนะนำฉุกเฉิน ส่วนอื่นใช้ได้ปกติ |
 | weather-disaster ล่ม | Overview / Safety Map แสดงแผนที่เปล่าพร้อมแถบแจ้งเตือน ไม่ใช่หน้าขาว |
 | api-backend ล่ม | ทั้งเว็บใช้ไม่ได้ **จุดเดียวที่ห้ามล่ม** compose ตั้ง `restart: unless-stopped` ไว้แล้ว แต่ Docker restart ให้เฉพาะตอน process ตาย ถ้าค้างแต่ไม่ตาย (health ไม่ผ่าน) ต้อง `docker compose restart api-backend` เอง เจ้าของโมดูล 4 ต้องทำให้ process จบการทำงานเมื่อต่อฐานข้อมูลไม่ได้ |
 | เครื่องใครรันทั้งระบบไม่ไหว (RAM ไม่พอ) | รันเฉพาะตัวที่ทำอยู่ + api-backend เช่น `docker compose up api-backend routing-engine` ตัวอื่นเป็น stub ก็พอ |
@@ -64,6 +65,7 @@
 | 6 weather-disaster | ทุกแหล่ง | Open-Meteo อย่างเดียว + GDACS |
 | 7 risk-decision | ครบทุก recommendation | ระดับความเสี่ยงตามเกณฑ์ + `NORMAL`/`REROUTE`/`AVOID` (ตัด `DELAY`) |
 | 8 assistant-agent | ถามตอบ + สั่งแก้ทริป | ถามตอบ + คำสั่งแบบกฎตายตัว 3 แบบ (หัวข้อ B) |
+| 9 safety-knowledge | ค้นเอกสาร + คำแนะนำฉุกเฉินครบทุกชนิดภัย | คำแนะนำฉุกเฉินของน้ำท่วม ฝนหนัก ดินถล่ม + เบอร์ติดต่อ (ไม่ต้องค้น) |
 
 **เส้นที่ต้องสาธิตได้เสมอ ห้ามตัด**: login > สร้างทริป > กด Plan > เห็นเส้นทางพร้อมความเสี่ยงบนแผนที่
 
@@ -80,4 +82,4 @@
 1. `make health` ดูว่าตัวไหนไม่ตอบ
 2. เปิด DevTools ของ browser ดู response header `X-Request-ID` ของคำขอที่พัง
 3. `docker compose logs | grep <request_id>` ไล่ดูว่าหยุดที่ service ไหน
-4. ยิง endpoint ของ service นั้นตรงๆ ที่พอร์ตบนเครื่อง (8001 ถึง 8005) เพื่อแยกว่าพังที่ตัวมันหรือพังที่ตัวที่มันเรียกต่อ
+4. ยิง endpoint ของ service นั้นตรงๆ ที่พอร์ตบนเครื่อง (8001 ถึง 8006) เพื่อแยกว่าพังที่ตัวมันหรือพังที่ตัวที่มันเรียกต่อ
