@@ -4,7 +4,13 @@ import { NextRequest } from "next/server";
 export const dynamic = "force-dynamic";
 
 async function forward(req: NextRequest) {
-  const base = process.env.API_INTERNAL_URL || "http://localhost:8001";
+  const base = process.env.API_INTERNAL_URL;
+  if (!base) {
+    return Response.json(
+      { data: null, error: { code: "INTERNAL_ERROR", message: "ยังไม่ได้ตั้งค่า API_INTERNAL_URL" } },
+      { status: 500 },
+    );
+  }
   const url = base + req.nextUrl.pathname + req.nextUrl.search;
   const headers: Record<string, string> = { "content-type": req.headers.get("content-type") || "application/json" };
   for (const h of ["authorization", "x-request-id"]) {
