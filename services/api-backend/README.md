@@ -4,7 +4,7 @@
 **ผู้รับผิดชอบ**: TBD
 **branch**: `feature/api-backend/<ชื่อ>`
 **endpoint ที่ต้องมี**: ทั้งชุด api-backend ใน `docs/CONTRACT.md` หัวข้อ 6 (stub ตอนนี้ตอบครบทุกเส้นแล้ว แทนทีละเส้น)
-**เรียกใคร**: postgres, routing-engine, weather-disaster, assistant-agent
+**เรียกใคร**: postgres, routing-engine, weather-disaster, assistant-agent, safety-knowledge
 **ใครเรียกเรา**: frontend, assistant-agent (เรียกกลับมาแก้ทริป)
 
 ## รันเดี่ยว

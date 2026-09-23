@@ -109,6 +109,7 @@ export default function MyTripPage() {
                 {/* TODO(web-mytrip): แท็บขวาแสดงทุก waypoint ORIGIN/STOP/DESTINATION พร้อมเวลาถึง อากาศ และ RiskBadge (README ข้อ 6) */}
               </>
             )}
+            {/* TODO(web-mytrip): เส้นทางเป็น HIGH ให้แสดง <EmergencyCard hazardType=... /> จาก shared ตามภัยที่เจอ */}
             {/* TODO(web-mytrip): แก้ทริป (PATCH) และลบทริป (DELETE) */}
           </div>
         </div>

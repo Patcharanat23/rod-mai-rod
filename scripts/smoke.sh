@@ -48,6 +48,9 @@ expect_ok "สภาพอากาศแบบพื้นที่" "$R"
 R=$(curl -s --max-time 10 "$BASE/api/v1/hazards?min_lat=5.6&min_lng=97.3&max_lat=20.5&max_lng=105.7" -H "$AUTH")
 expect_ok "หมุดภัย (Safety Map)" "$R"
 
+R=$(curl -s --max-time 10 "$BASE/api/v1/safety/emergency?hazard_type=FLOOD" -H "$AUTH")
+expect_ok "คำแนะนำฉุกเฉิน" "$R"
+
 R=$(curl -s --max-time 120 -X POST "$BASE/api/v1/assistant/chat" -H "$AUTH" -H "$JSON" \
   -d '{"message":"เชียงใหม่ช่วงนี้น่าเที่ยวไหม","history":[]}')
 expect_ok "แชท" "$R"

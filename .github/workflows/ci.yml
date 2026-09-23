@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api-backend, routing-engine, weather-disaster, risk-decision, assistant-agent]
+        service: [api-backend, routing-engine, weather-disaster, risk-decision, assistant-agent, safety-knowledge]
     defaults:
       run:
         working-directory: services/${{ matrix.service }}

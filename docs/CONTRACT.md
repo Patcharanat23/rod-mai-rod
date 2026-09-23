@@ -17,12 +17,13 @@
 | Weather & Disaster | `services/weather-disaster/` | `weather-disaster` | 8000 | 8003 |
 | Risk & Decision | `services/risk-decision/` | `risk-decision` | 8000 | 8004 |
 | Assistant Agent | `services/assistant-agent/` | `assistant-agent` | 8000 | 8005 |
+| Safety Knowledge | `services/safety-knowledge/` | `safety-knowledge` | 8000 | 8006 |
 | Postgres | - | `postgres` | 5432 | 5433 (กันชนกับ Postgres ที่ลงไว้ในเครื่อง) |
 
 **กฎสำคัญที่สุดของตารางนี้**
 
 - service คุยกันเองใน Docker ใช้ `http://<ชื่อ host>:8000` เสมอ เช่น `http://routing-engine:8000` **ไม่ใช่** `routing-engine:8002`
-- พอร์ต 8001 ถึง 8005 มีไว้ยิง curl ทดสอบจากเครื่องตัวเองเท่านั้น ห้ามเขียนลงในโค้ด
+- พอร์ต 8001 ถึง 8006 มีไว้ยิง curl ทดสอบจากเครื่องตัวเองเท่านั้น ห้ามเขียนลงในโค้ด
 - ห้าม hardcode URL ของ service อื่นในโค้ด ให้อ่านจาก env ตามชื่อใน `.env.example` เช่น `ROUTING_ENGINE_URL`
 - ห้ามใช้ `localhost` เรียก service อื่น (ใน container `localhost` คือตัวมันเอง)
 
@@ -33,6 +34,8 @@ browser ──> web (Next.js) ──> api-backend            ทางเดี�
 api-backend ──> routing-engine ──> risk-decision ──> weather-disaster
 api-backend ──> weather-disaster                      สภาพอากาศแบบ area + หมุด Safety Map
 api-backend ──> assistant-agent ──> api-backend       assistant แก้ทริปผ่าน api-backend เท่านั้น
+assistant-agent ──> safety-knowledge                  ค้นคำแนะนำความปลอดภัยมาตอบในแชท
+api-backend ──> safety-knowledge                      คำแนะนำฉุกเฉินให้หน้าเว็บ
 api-backend ──> postgres                              มีแค่ api-backend ที่แตะฐานข้อมูล
 ```
 
@@ -93,6 +96,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | api-backend ไป assistant-agent | 100 วินาที |
 | assistant-agent ไป LLM | 30 วินาทีต่อครั้ง |
 | assistant-agent ไป api-backend | 60 วินาที (เพราะอาจเรียก `/plan` ต่อ) |
+| assistant-agent / api-backend ไป safety-knowledge | 10 วินาที |
 
 ตัวในต้องสั้นกว่าตัวนอกเสมอ ไม่งั้นตัวนอกจะตัดสายก่อนตัวในตอบ
 
@@ -183,6 +187,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | GET | `/api/v1/weather/area?lat=&lng=` | สภาพอากาศแบบพื้นที่รอบจุด (ใช้ตอนยังไม่มีทริป) |
 | GET | `/api/v1/hazards?min_lat=&min_lng=&max_lat=&max_lng=` | หมุดภัยในกรอบแผนที่ (Safety Map) |
 | POST | `/api/v1/assistant/chat` | `{message, history[]}` ได้ `ChatReply` |
+| GET | `/api/v1/safety/emergency?hazard_type=` | คำแนะนำฉุกเฉินของภัยชนิดนั้น ได้ `Emergency` (แสดงเมื่อเส้นทางหรือหมุดภัยเป็น HIGH) |
 
 ### routing-engine
 
@@ -209,6 +214,13 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | Method | Path | ใช้ทำอะไร |
 |---|---|---|
 | POST | `/api/v1/chat` | `{message, history[]}` + header `Authorization` ของผู้ใช้ ได้ `ChatReply` |
+
+### safety-knowledge
+
+| Method | Path | ใช้ทำอะไร |
+|---|---|---|
+| POST | `/api/v1/safety/search` | `{query, hazard_types[], limit}` ได้ `{results: [{doc_id, title_th, snippet_th, source}], warnings}` ไม่เจอได้ `results: []` |
+| GET | `/api/v1/safety/emergency?hazard_type=` | ได้ `Emergency` hazard_type ที่ไม่รู้จักได้ `VALIDATION_ERROR` ยังไม่มีคำแนะนำได้ `NOT_FOUND` |
 
 ### ตัวอย่างข้อมูลที่ใช้ร่วมกัน
 
@@ -256,7 +268,14 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
   "province": "นครสวรรค์", "title_th": "น้ำท่วมขังหลายพื้นที่", "source": "GDACS", "updated_at": "2026-09-24T03:00:00Z" }
 ```
 
-`source` ที่ใช้ได้: `OPEN_METEO`, `GDACS`, `USGS`, `THAIWATER`, `TMD`, `DERIVED` (ประเมินเองจากข้อมูลอื่น เช่น เสี่ยงดินถล่มจากฝนสะสม ต้องบอกผู้ใช้ว่าเป็นการประเมิน)
+`Emergency`
+
+```json
+{ "hazard_type": "FLOOD", "steps_th": ["อย่าขับผ่านน้ำที่มองไม่เห็นผิวถนน"],
+  "contacts": [{ "name_th": "สายด่วนนิรภัย ปภ.", "phone": "1784" }] }
+```
+
+`source` ของ Hazard ที่ใช้ได้: `OPEN_METEO`, `GDACS`, `USGS`, `THAIWATER`, `TMD`, `DERIVED` (ประเมินเองจากข้อมูลอื่น เช่น เสี่ยงดินถล่มจากฝนสะสม ต้องบอกผู้ใช้ว่าเป็นการประเมิน)
 คำตอบของ `GET /hazards`: `{"hazards": [Hazard...], "warnings": []}`
 
 คำตอบของ `GET /weather/area` และ `GET /area`
@@ -314,7 +333,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 - `dev` เป็น branch รวมงาน merge เข้าต้องมี 1 approval
 - ห้าม push ตรงเข้า `main` หรือ `dev`
 - ทุกคนทำงานใน branch ของตัวเอง แตกจาก `dev`: `feature/<module-slug>/<ชื่อ>` เช่น `feature/routing-engine/somchai`
-  module-slug: `web-overview`, `web-mytrip`, `web-safety-assistant`, `api-backend`, `routing-engine`, `weather-disaster`, `risk-decision`, `assistant-agent`
+  module-slug: `web-overview`, `web-mytrip`, `web-safety-assistant`, `api-backend`, `routing-engine`, `weather-disaster`, `risk-decision`, `assistant-agent`, `safety-knowledge`
 - commit: `<type>(<module-slug>): <ทำอะไร>` type คือ `feat` `fix` `test` `docs` `refactor` `chore`
 - **ตอนเปิด PR ช่อง base จะเด้งเป็น `main` เสมอ (เพราะ `main` เป็น default) ต้องเปลี่ยนเป็น `dev` เองทุกครั้ง** ถ้าลืม PR จะติดกฎ 2 approval ของ `main` และถูกปิดให้เปิดใหม่
 - เจ้าของโปรเจกต์รีวิวทุก PR ก่อนเข้า `dev` และ `main` (เป็น code owner คนเดียวใน `.github/CODEOWNERS` GitHub จึงไม่ยอมให้ merge จนกว่าเขาจะ approve)

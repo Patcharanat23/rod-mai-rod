@@ -48,6 +48,7 @@ export default function SafetyMapPage() {
           ),
         }))}
       />
+      {/* TODO(web-safety-assistant): กดหมุด HIGH แล้วแสดง <EmergencyCard hazardType={h.hazard_type} /> */}
       {data && data.hazards.length === 0 && <p className="muted">ไม่มีจุดเสี่ยงในบริเวณนี้</p>}
     </div>
   );

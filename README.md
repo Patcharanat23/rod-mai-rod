@@ -28,7 +28,7 @@ make smoke     # ไล่เส้นหลัก login > สร้างทร
 | `make down` | `docker compose down` |
 | `make reset` | `docker compose down -v` (ลบข้อมูลในฐานข้อมูลด้วย) |
 | `make logs` | `docker compose logs -f --tail=100` |
-| `make health` | `curl http://localhost:8001/health` (เปลี่ยนพอร์ตเป็น 3000, 8002 ถึง 8005 ทีละตัว) |
+| `make health` | `curl http://localhost:8001/health` (เปลี่ยนพอร์ตเป็น 3000, 8002 ถึง 8006 ทีละตัว) |
 | `make smoke` | รัน `scripts/smoke.sh` ผ่าน Git Bash: `sh scripts/smoke.sh http://localhost:8001` |
 
 ทุก service ตอนนี้เป็นตัวชั่วคราว (stub) ที่ตอบข้อมูลตัวอย่างตามรูปแบบจริงและส่งต่อกันจริงแล้ว ทุกคนต่อกันได้ทันทีโดยไม่ต้องรอใคร
@@ -39,7 +39,7 @@ make smoke     # ไล่เส้นหลัก login > สร้างทร
 
 | # | โมดูล | โฟลเดอร์ | พอร์ตบนเครื่อง | ผู้รับผิดชอบ |
 |---|---|---|---|---|
-| 1 | Frontend: โครงเว็บ + Login + Overview | `apps/web/app/overview/` | 3000 | TBD |
+| 1 | Frontend: โครงเว็บ + Login + Overview | `apps/web/app/overview/` | 3000 | เจ้าของโปรเจกต์ |
 | 2 | Frontend: My Trip | `apps/web/app/my-trip/` | 3000 | TBD |
 | 3 | Frontend: Safety Map + หน้าแชท | `apps/web/app/safety-map/`, `apps/web/app/assistant/` | 3000 | TBD |
 | 4 | API Gateway + Auth + ฐานข้อมูล | `services/api-backend/` | 8001 | TBD |
@@ -47,6 +47,7 @@ make smoke     # ไล่เส้นหลัก login > สร้างทร
 | 6 | Weather & Disaster | `services/weather-disaster/` | 8003 | TBD |
 | 7 | Risk & Decision | `services/risk-decision/` | 8004 | TBD |
 | 8 | Assistant Agent | `services/assistant-agent/` | 8005 | TBD |
+| 9 | Safety Knowledge (คำแนะนำความปลอดภัย + ฉุกเฉิน) | `services/safety-knowledge/` | 8006 | TBD |
 
 ## Git flow สรุปสั้น
 

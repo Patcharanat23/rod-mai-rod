@@ -4,7 +4,7 @@
 **ผู้รับผิดชอบ**: TBD
 **branch**: `feature/assistant-agent/<ชื่อ>`
 **endpoint**: `POST /api/v1/chat` (`docs/CONTRACT.md` หัวข้อ 6)
-**เรียกใคร**: LLM (ไลบรารี `openai` + `base_url`), api-backend
+**เรียกใคร**: LLM (ไลบรารี `openai` + `base_url`), api-backend, safety-knowledge (`safety_search()` ใน `app.py`)
 **ใครเรียกเรา**: api-backend
 
 ## รันเดี่ยว
