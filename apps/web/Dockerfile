@@ -1,8 +1,14 @@
-FROM node:20-alpine
+FROM node:22-alpine AS build
 WORKDIR /app
-COPY package.json .
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY . .
+RUN npm run build
+
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production PORT=8000 HOSTNAME=0.0.0.0
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
 EXPOSE 8000
-ENV PORT=8000
-CMD ["npm", "start"]
+CMD ["node", "server.js"]
