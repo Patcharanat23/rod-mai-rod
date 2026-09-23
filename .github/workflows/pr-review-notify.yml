@@ -1,0 +1,60 @@
+# แจ้งเตือนเข้าห้อง Discord ส่วนตัวของเจ้าของ PR เมื่อมีคน review เสร็จ (approve / ขอแก้ / คอมเมนต์)
+#
+# ก่อนใช้งาน (ดูละเอียดใน docs/DISCORD_SETUP.md):
+#   1. สร้าง Incoming Webhook ในห้อง Discord ส่วนตัวของแต่ละโมดูล
+#   2. เพิ่ม URL เป็น GitHub secret ชื่อ DISCORD_WEBHOOK_<MODULE_SLUG แบบตัวพิมพ์ใหญ่ขีดล่าง>
+#      เช่น routing-engine -> DISCORD_WEBHOOK_ROUTING_ENGINE
+#   3. Branch ของ PR ต้องเป็นรูปแบบ feature/<module-slug>/<ชื่อคุณ> ตาม docs/CONTRACT.md
+name: Notify Discord on PR review
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: หา module-slug จากชื่อ branch
+        id: parse
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # คาดว่า branch เป็นรูปแบบ feature/<slug>/<name>
+          SLUG=$(echo "$BRANCH" | awk -F'/' '{print $2}')
+          SECRET_KEY=$(echo "$SLUG" | tr '[:lower:]-' '[:upper:]_')
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "secret_key=$SECRET_KEY" >> "$GITHUB_OUTPUT"
+          echo "หา module จาก branch '$BRANCH' ได้: slug='$SLUG' secret_key='$SECRET_KEY'"
+
+      - name: ส่งข้อความไป Discord
+        if: steps.parse.outputs.secret_key != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets[format('DISCORD_WEBHOOK_{0}', steps.parse.outputs.secret_key)] }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEWER: ${{ github.event.review.user.login }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          SECRET_KEY: ${{ steps.parse.outputs.secret_key }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "ยังไม่ได้ตั้ง secret DISCORD_WEBHOOK_${SECRET_KEY} ข้ามการแจ้งเตือน"
+            exit 0
+          fi
+
+          case "$REVIEW_STATE" in
+            approved) EMOJI="✅"; STATUS_TH="ผ่านแล้ว พร้อม merge" ;;
+            changes_requested) EMOJI="🔧"; STATUS_TH="ต้องแก้ไขก่อน" ;;
+            commented) EMOJI="💬"; STATUS_TH="มีคอมเมนต์จากรีวิว" ;;
+            *) EMOJI="ℹ️"; STATUS_TH="อัปเดตสถานะรีวิว" ;;
+          esac
+
+          MESSAGE=$(printf '%s **%s**\nโดย: %s\nPR: %s\n%s\n\n**รายละเอียด:**\n%s' \
+            "$EMOJI" "$STATUS_TH" "$REVIEWER" "$PR_TITLE" "$PR_URL" "${REVIEW_BODY:-(ไม่มีข้อความเพิ่มเติม)}")
+
+          PAYLOAD=$(jq -n --arg content "$MESSAGE" '{content: $content, allowed_mentions: {parse: []}}')
+
+          curl -sS -X POST "$DISCORD_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"

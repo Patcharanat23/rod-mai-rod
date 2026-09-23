@@ -1,0 +1,39 @@
+# ตรวจทุก PR: เทสต์ของแต่ละ service + รันทั้งระบบแล้วไล่ smoke
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-backend, routing-engine, weather-disaster, risk-decision, assistant-agent]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest
+      - name: pytest
+        run: |
+          if [ -d tests ]; then pytest -q; else echo "ยังไม่มี tests/"; fi
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose up --build -d --wait --wait-timeout 180
+      - run: sh scripts/smoke.sh http://localhost:8001
+      - run: sh scripts/smoke.sh http://localhost:3000
+      - name: log ตอนพัง
+        if: failure()
+        run: docker compose logs --tail=200

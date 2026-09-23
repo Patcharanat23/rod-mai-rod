@@ -1,0 +1,83 @@
+x-python-service: &python-service
+  env_file: .env
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 10s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rodmairod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-rodmairod}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rodmairod}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: ./apps/web
+    env_file: .env
+    restart: unless-stopped
+    ports:
+      - "3000:8000"
+    depends_on:
+      api-backend:
+        condition: service_healthy
+
+  api-backend:
+    <<: *python-service
+    build: ./services/api-backend
+    environment:
+      SERVICE_NAME: api-backend
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  routing-engine:
+    <<: *python-service
+    build: ./services/routing-engine
+    environment:
+      SERVICE_NAME: routing-engine
+    ports:
+      - "8002:8000"
+
+  weather-disaster:
+    <<: *python-service
+    build: ./services/weather-disaster
+    environment:
+      SERVICE_NAME: weather-disaster
+    ports:
+      - "8003:8000"
+
+  risk-decision:
+    <<: *python-service
+    build: ./services/risk-decision
+    environment:
+      SERVICE_NAME: risk-decision
+    ports:
+      - "8004:8000"
+
+  assistant-agent:
+    <<: *python-service
+    build: ./services/assistant-agent
+    environment:
+      SERVICE_NAME: assistant-agent
+    ports:
+      - "8005:8000"
+
+volumes:
+  pgdata:
