@@ -1,7 +1,14 @@
 import pytest
 
-from app import decide, rain_level, score_in_band, wind_level, worst
-from geo import score_to_level
+from app import decide, nearby_hazards, point_level, rain_level, score_in_band, wind_level, worst
+from geo import haversine_km, score_to_level
+
+EARTH_DEG_KM = 111.194926644  # กม.ต่อ 1 องศาละติจูด (R * pi/180, R=6371 กม.)
+
+
+def _point_north_of(base, km):
+    """จุดที่ห่างจาก base ไปทางเหนือ km กม. (ระยะทางตามละติจูดตรงๆ วัดด้วย haversine ได้ตรงตัว)"""
+    return {"lat": base["lat"] + km / EARTH_DEG_KM, "lng": base["lng"]}
 
 
 @pytest.mark.parametrize("mm, level", [(0, "LOW"), (9.9, "LOW"), (10, "MEDIUM"), (35, "MEDIUM"), (35.1, "HIGH")])
@@ -47,3 +54,43 @@ def test_medium_without_alternative_is_normal():
 
 def test_unknown_main_does_not_crash():
     assert decide([route("r1", None, 100), route("r2", "LOW", 110)]) == ("r1", "NORMAL")
+
+
+BKK = {"lat": 13.7563, "lng": 100.5018}
+
+
+def test_hazard_within_20km_counts():
+    hazard = {**_point_north_of(BKK, 19), "severity": "MEDIUM", "hazard_id": "h1"}
+    assert haversine_km(BKK, hazard) == pytest.approx(19, abs=0.1)
+    assert nearby_hazards(BKK, [hazard]) == [hazard]
+
+
+def test_hazard_beyond_20km_does_not_count():
+    hazard = {**_point_north_of(BKK, 21), "severity": "MEDIUM", "hazard_id": "h2"}
+    assert haversine_km(BKK, hazard) == pytest.approx(21, abs=0.1)
+    assert nearby_hazards(BKK, [hazard]) == []
+
+
+def test_hazard_medium_raises_point_at_least_medium():
+    # ฝนลมเดี่ยวๆ คือ LOW แต่มีหมุด MEDIUM อยู่ใกล้ ต้องได้อย่างน้อย MEDIUM
+    forecast = {"rain_mm_per_h": 2, "wind_kmh": 10}
+    hazards = nearby_hazards(BKK, [{**_point_north_of(BKK, 5), "severity": "MEDIUM", "hazard_id": "h3"}])
+    assert point_level(forecast, hazards) == "MEDIUM"
+
+
+def test_hazard_high_10km_gives_high():
+    # ตรง Definition of Done: จุดที่มีหมุดน้ำท่วม HIGH ห่าง 10 กม. ต้องได้ระดับ HIGH
+    forecast = {"rain_mm_per_h": 2, "wind_kmh": 10}
+    hazards = nearby_hazards(BKK, [{**_point_north_of(BKK, 10), "severity": "HIGH", "hazard_id": "h4"}])
+    assert point_level(forecast, hazards) == "HIGH"
+
+
+def test_point_level_without_forecast_ignores_hazards():
+    # ไม่มีข้อมูลอากาศ = null เสมอ ไม่ว่าหมุดภัยจะมีหรือไม่
+    hazards = [{**_point_north_of(BKK, 1), "severity": "HIGH", "hazard_id": "h5"}]
+    assert point_level(None, hazards) is None
+
+
+def test_point_level_no_nearby_hazard_uses_weather_only():
+    forecast = {"rain_mm_per_h": 2, "wind_kmh": 10}
+    assert point_level(forecast, []) == "LOW"

@@ -2,7 +2,8 @@
 
 ส่วนที่ต่อไว้จริงแล้ว: ขอพยากรณ์ ณ เวลาที่ไปถึงของทุกจุดทุกเส้นจาก weather-disaster ในคำขอเดียว
 คิดระดับตามเกณฑ์ CONTRACT หัวข้อ 4 และจุดที่ไม่มีข้อมูลเป็น null พร้อม WEATHER_UNAVAILABLE
-ที่ยังต้องทำ: ดูที่ TODO(risk-decision) ในไฟล์นี้ (หมุดภัยใกล้จุด, risk_score, DELAY, summary_th)
+หมุดภัยในรัศมี 20 กม. รอบแต่ละจุดก็รวมเข้ากับระดับความเสี่ยงแล้ว (7.1)
+ที่ยังต้องทำ: ดูที่ TODO(risk-decision) ในไฟล์นี้ (risk_score, DELAY, summary_th)
 """
 from datetime import datetime
 from typing import Optional
@@ -11,7 +12,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from envelope import ApiError, call, ok, setup
-from geo import to_iso
+from geo import haversine_km, to_iso
 
 app = FastAPI(title="risk-decision")
 setup(app, "risk-decision")
@@ -22,6 +23,9 @@ WEATHER_TIMEOUT = 10  # วินาที ตาม CONTRACT หัวข้อ
 RAIN_MEDIUM, RAIN_HIGH_ABOVE = 10.0, 35.0
 WIND_MEDIUM, WIND_HIGH_ABOVE = 40.0, 61.0
 MAX_SLOWER_RATIO = 1.5
+HAZARD_RADIUS_KM = 20.0
+# ระยะ padding ของกรอบพิกัดตอนขอหมุดภัย กันหมุดใกล้ขอบรัศมีหลุดกรอบ (1 องศา ~ 111 กม.)
+_BBOX_PAD_DEG = HAZARD_RADIUS_KM / 111.0
 SCORE_RANGE = {"LOW": (0, 33), "MEDIUM": (34, 66), "HIGH": (67, 100)}
 _ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
 
@@ -66,11 +70,16 @@ def score_in_band(level: str, severity: float) -> int:
     return round(low + (high - low) * max(0.0, min(1.0, severity)))
 
 
-def point_level(forecast: Optional[dict]) -> Optional[str]:
+def nearby_hazards(point: dict, hazards: list[dict], radius_km: float = HAZARD_RADIUS_KM) -> list[dict]:
+    """หมุดภัยที่อยู่ในรัศมี radius_km จากจุดนี้ (README ข้อ 8)"""
+    return [h for h in hazards if haversine_km(point, h) <= radius_km]
+
+
+def point_level(forecast: Optional[dict], hazards: list[dict]) -> Optional[str]:
     if forecast is None:
         return None
-    # TODO(risk-decision): รวมระดับจากหมุดภัยในรัศมี 20 กม. ด้วย (README ข้อ 8)
-    return worst([rain_level(forecast["rain_mm_per_h"]), wind_level(forecast["wind_kmh"])])
+    hazard_level = worst([h["severity"] for h in hazards])
+    return worst([rain_level(forecast["rain_mm_per_h"]), wind_level(forecast["wind_kmh"]), hazard_level])
 
 
 def decide(results: list[dict]) -> tuple[str, str]:
@@ -116,6 +125,25 @@ def fetch_forecasts(points: list[dict]) -> tuple[list[Optional[dict]], list[str]
     return forecasts, data.get("warnings", [])
 
 
+def fetch_hazards(points: list[dict]) -> tuple[list[dict], list[str]]:
+    """ขอหมุดภัยครั้งเดียวต่อคำขอ กรอบพิกัดครอบทุกจุด (เผื่อ padding กันหมุดใกล้ขอบหลุด)
+    ขอไม่ได้: ไปต่อด้วยฝน/ลมอย่างเดียว พร้อม warning HAZARD_FEED_UNAVAILABLE (README ข้อ 8)
+    """
+    lats = [p["lat"] for p in points]
+    lngs = [p["lng"] for p in points]
+    params = {
+        "min_lat": min(lats) - _BBOX_PAD_DEG,
+        "min_lng": min(lngs) - _BBOX_PAD_DEG,
+        "max_lat": max(lats) + _BBOX_PAD_DEG,
+        "max_lng": max(lngs) + _BBOX_PAD_DEG,
+    }
+    try:
+        data = call("WEATHER_DISASTER_URL", "GET", "/api/v1/hazards", timeout=WEATHER_TIMEOUT, params=params)
+    except ApiError:
+        return [], ["HAZARD_FEED_UNAVAILABLE"]
+    return data.get("hazards", []), []
+
+
 @app.post("/api/v1/risk/evaluate")
 def evaluate(body: EvaluateIn):
     if not body.routes or any(not r.points for r in body.routes):
@@ -125,14 +153,17 @@ def evaluate(body: EvaluateIn):
 
     flat = [{"lat": p.lat, "lng": p.lng, "eta": to_iso(p.eta)} for r in body.routes for p in r.points]
     forecasts, warnings = fetch_forecasts(flat)
+    hazards, hazard_warnings = fetch_hazards(flat)
+    warnings = warnings + hazard_warnings
 
     results, i = [], 0
     for route in body.routes:
         points = []
         for _ in route.points:
-            level = point_level(forecasts[i])
+            point_hazards = nearby_hazards(flat[i], hazards)
+            level = point_level(forecasts[i], point_hazards)
             # TODO(risk-decision): severity จากค่าจริงแทน 0.3 (ยิ่งใกล้ขอบบนของระดับ score ยิ่งสูง)
-            points.append({**flat[i], "forecast": forecasts[i], "hazards": [], "risk_level": level,
+            points.append({**flat[i], "forecast": forecasts[i], "hazards": point_hazards, "risk_level": level,
                            "risk_score": score_in_band(level, 0.3) if level else None})
             i += 1
         if any(p["risk_level"] is None for p in points):
