@@ -5,7 +5,7 @@
 หมุดภัยในรัศมี 20 กม. รอบแต่ละจุดก็รวมเข้ากับระดับความเสี่ยงแล้ว (7.1)
 risk_score คิดจากความรุนแรงจริงของปัจจัยที่แย่ที่สุดแล้ว ไม่ใช่ค่าคงที่ (7.2)
 summary_th บอกสาเหตุ ระยะทางจากจุดเริ่มต้น เวลาไทยโดยประมาณ และควรทำอะไรแล้ว (7.3)
-ที่ยังต้องทำ: ดูที่ TODO(risk-decision) ในไฟล์นี้ (DELAY, เสริม)
+DELAY (เลื่อนออก +3/+6 ชม. เช็คเส้นหลักอย่างเดียว) ก็ทำแล้วเช่นกัน (7.4 เสริม)
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -31,6 +31,7 @@ _BBOX_PAD_DEG = HAZARD_RADIUS_KM / 111.0
 SCORE_RANGE = {"LOW": (0, 33), "MEDIUM": (34, 66), "HIGH": (67, 100)}
 _ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
 THAI_TZ = timezone(timedelta(hours=7))  # ไทยไม่มี DST offset คงที่ตลอดปี
+DELAY_OFFSET_HOURS = (3, 6)  # README ข้อ 6: ลองเลื่อนออก +3 แล้ว +6 ชม. เช็คเส้นหลักอย่างเดียว
 
 
 class Point(BaseModel):
@@ -125,8 +126,18 @@ def point_severity(forecast: dict, hazards: list[dict], point: dict, level: str)
     return max(candidates) if candidates else 0.0
 
 
-def decide(results: list[dict]) -> tuple[str, str]:
-    """ตารางคำแนะนำ CONTRACT หัวข้อ 4 results[0] คือเส้นหลัก คืน (recommended_route_id, recommendation)"""
+def best_delay_hours(main_level: str, delay_levels: dict[int, Optional[str]]) -> Optional[int]:
+    """จำนวนชั่วโมงที่เลื่อนแล้วน้อยที่สุด (3 ก่อน 6) ที่ทำให้ระดับเส้นหลักดีขึ้นกว่า main_level ถ้าไม่มีคืน None"""
+    for hours in sorted(delay_levels):
+        level = delay_levels[hours]
+        if level is not None and _ORDER[level] < _ORDER[main_level]:
+            return hours
+    return None
+
+
+def decide(results: list[dict], delay_levels: Optional[dict[int, Optional[str]]] = None) -> tuple[str, str]:
+    """ตารางคำแนะนำ CONTRACT หัวข้อ 4 results[0] คือเส้นหลัก คืน (recommended_route_id, recommendation)
+    delay_levels: {3: ระดับเส้นหลักถ้าเลื่อนออก 3 ชม., 6: ...} ไม่ใส่ = ไม่เช็ค DELAY (7.4 เสริม)"""
     main = results[0]
     candidates = [r for r in results
                   if r["risk_level"] is not None and r["duration_min"] <= main["duration_min"] * MAX_SLOWER_RATIO]
@@ -137,7 +148,8 @@ def decide(results: list[dict]) -> tuple[str, str]:
         return main["route_id"], "NORMAL"
     if _ORDER[best["risk_level"]] < _ORDER[main["risk_level"]]:
         return best["route_id"], "REROUTE"
-    # TODO(risk-decision): เช็ค DELAY (+3 / +6 ชม.) ตรงนี้ ก่อน AVOID (README ข้อ 6)
+    if delay_levels and best_delay_hours(main["risk_level"], delay_levels) is not None:
+        return main["route_id"], "DELAY"
     if main["risk_level"] == "HIGH":
         return main["route_id"], "AVOID"
     return main["route_id"], "NORMAL"
@@ -176,8 +188,9 @@ def _risk_cause_th(point: dict) -> str:
     return "และ".join(causes) if causes else "สภาพอากาศแปรปรวน"
 
 
-def summary_text(main: dict, recommended: dict, recommendation: str) -> str:
-    """สรุปเป็นภาษาไทยว่าเสี่ยงเพราะอะไร ตรงไหน กี่โมง และควรทำอะไร (README ข้อ 9 ต้องไม่ว่างเปล่า)"""
+def summary_text(main: dict, recommended: dict, recommendation: str, delay_hours: Optional[int] = None) -> str:
+    """สรุปเป็นภาษาไทยว่าเสี่ยงเพราะอะไร ตรงไหน กี่โมง และควรทำอะไร (README ข้อ 9 ต้องไม่ว่างเปล่า)
+    delay_hours: จำนวนชั่วโมงที่แนะนำให้เลื่อน ใช้เมื่อ recommendation == "DELAY" เท่านั้น"""
     level = main["risk_level"]
     if level is None:
         return "ตอนนี้ประเมินความเสี่ยงไม่ได้ ข้อมูลสภาพอากาศไม่พร้อม"
@@ -193,7 +206,8 @@ def summary_text(main: dict, recommended: dict, recommendation: str) -> str:
         slower = round(recommended["duration_min"] - main["duration_min"])
         action = f"แนะนำเส้นทางสำรอง ช้ากว่าเดิม {slower} นาที" if slower > 0 else "แนะนำเส้นทางสำรอง ไม่ช้ากว่าเดิม"
     elif recommendation == "DELAY":
-        action = "แนะนำเลื่อนเวลาออกเดินทาง ความเสี่ยงจะลดลง"
+        action = f"แนะนำเลื่อนเวลาออกเดินทาง {delay_hours} ชม. ความเสี่ยงจะลดลง" if delay_hours \
+            else "แนะนำเลื่อนเวลาออกเดินทาง ความเสี่ยงจะลดลง"
     elif recommendation == "AVOID":
         action = "ควรเลี่ยงการเดินทางช่วงนี้"
     else:
@@ -242,12 +256,26 @@ def evaluate(body: EvaluateIn):
         raise ApiError("VALIDATION_ERROR", "eta ต้องมี timezone")
 
     flat = [{"lat": p.lat, "lng": p.lng, "eta": to_iso(p.eta)} for r in body.routes for p in r.points]
-    forecasts, warnings = fetch_forecasts(flat)
-    hazards, hazard_warnings = fetch_hazards(flat)
+    main_points = body.routes[0].points
+    # DELAY (7.4): จุดเลื่อนเวลาของเส้นหลักอย่างเดียว ตำแหน่งเดิม แค่ eta ขยับ รวมเข้าคำขอ forecast
+    # เดียวกับชุดแรกตาม README ข้อ 6 กันไม่ให้เกิน timeout จากการยิงหลายรอบ
+    delayed_flat = {hours: [{"lat": p.lat, "lng": p.lng, "eta": to_iso(p.eta + timedelta(hours=hours))}
+                             for p in main_points] for hours in DELAY_OFFSET_HOURS}
+    combined = flat + [pt for hours in DELAY_OFFSET_HOURS for pt in delayed_flat[hours]]
+
+    all_forecasts, warnings = fetch_forecasts(combined)
+    hazards, hazard_warnings = fetch_hazards(flat)  # ตำแหน่งเดิม เวลาเลื่อนไม่กระทบกรอบพิกัด
     warnings = warnings + hazard_warnings
 
-    results, i = [], 0
-    for route in body.routes:
+    forecasts = all_forecasts[:len(flat)]
+    n_main = len(main_points)
+    offset_forecasts, idx = {}, len(flat)
+    for hours in DELAY_OFFSET_HOURS:
+        offset_forecasts[hours] = all_forecasts[idx: idx + n_main]
+        idx += n_main
+
+    results, i, main_point_hazards = [], 0, []
+    for route_idx, route in enumerate(body.routes):
         points = []
         for _ in route.points:
             point_hazards = nearby_hazards(flat[i], hazards)
@@ -255,6 +283,8 @@ def evaluate(body: EvaluateIn):
             severity = point_severity(forecasts[i], point_hazards, flat[i], level) if level else None
             points.append({**flat[i], "forecast": forecasts[i], "hazards": point_hazards, "risk_level": level,
                            "risk_score": score_in_band(level, severity) if level else None})
+            if route_idx == 0:
+                main_point_hazards.append(point_hazards)  # หมุดภัยไม่ผูกเวลา ใช้ซ้ำกับ DELAY ได้
             i += 1
         if any(p["risk_level"] is None for p in points):
             warnings.append("WEATHER_UNAVAILABLE")
@@ -263,9 +293,13 @@ def evaluate(body: EvaluateIn):
                         "risk_level": worst([p["risk_level"] for p in points]),
                         "risk_score": max(scores) if scores else None, "points": points})
 
-    recommended_id, recommendation = decide(results)
+    delay_levels = {hours: worst([point_level(offset_forecasts[hours][j], main_point_hazards[j])
+                                   for j in range(n_main)]) for hours in DELAY_OFFSET_HOURS}
+
+    recommended_id, recommendation = decide(results, delay_levels)
     recommended = next(r for r in results if r["route_id"] == recommended_id)
-    summary = summary_text(results[0], recommended, recommendation)
+    delay_hours = best_delay_hours(results[0]["risk_level"], delay_levels) if recommendation == "DELAY" else None
+    summary = summary_text(results[0], recommended, recommendation, delay_hours)
     for r in results:
         r.pop("duration_min")
     return ok({

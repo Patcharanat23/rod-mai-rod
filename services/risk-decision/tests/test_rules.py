@@ -1,8 +1,8 @@
 import pytest
 
-from app import (_risk_cause_th, _thai_time_th, _worst_point_and_distance, decide, hazard_severity,
-                  nearby_hazards, point_level, point_severity, rain_level, rain_severity, score_in_band,
-                  summary_text, wind_level, wind_severity, worst)
+from app import (_risk_cause_th, _thai_time_th, _worst_point_and_distance, best_delay_hours, decide,
+                  hazard_severity, nearby_hazards, point_level, point_severity, rain_level, rain_severity,
+                  score_in_band, summary_text, wind_level, wind_severity, worst)
 from geo import haversine_km, score_to_level
 
 EARTH_DEG_KM = 111.194926644  # กม.ต่อ 1 องศาละติจูด (R * pi/180, R=6371 กม.)
@@ -211,6 +211,39 @@ def test_summary_avoid_and_delay_say_what_to_do():
     main = {"route_id": "r1", "duration_min": 100, "risk_level": "HIGH", "points": [p1]}
     assert "เลี่ยงการเดินทาง" in summary_text(main, main, "AVOID")
     assert "เลื่อนเวลา" in summary_text(main, main, "DELAY")
+
+
+# --- 7.4: DELAY (เสริม) ---
+
+def test_best_delay_hours_prefers_earlier_improvement():
+    assert best_delay_hours("HIGH", {3: "MEDIUM", 6: "LOW"}) == 3
+    assert best_delay_hours("HIGH", {3: "HIGH", 6: "MEDIUM"}) == 6
+    assert best_delay_hours("HIGH", {3: "HIGH", 6: "HIGH"}) is None
+    assert best_delay_hours("HIGH", {3: None, 6: "LOW"}) == 6
+
+
+def test_decide_delay_before_avoid_when_no_reroute_and_delay_helps():
+    results = [route("r1", "HIGH", 100)]  # เส้นเดียว ไม่มีทางเลือก reroute
+    assert decide(results, {3: "MEDIUM", 6: "LOW"}) == ("r1", "DELAY")
+
+
+def test_decide_falls_back_to_avoid_when_delay_does_not_help():
+    results = [route("r1", "HIGH", 100)]
+    assert decide(results, {3: "HIGH", 6: "HIGH"}) == ("r1", "AVOID")
+    assert decide(results) == ("r1", "AVOID")  # ไม่ใส่ delay_levels เลย พฤติกรรมเดิมต้องเหมือนเดิม (ห้ามพัง)
+
+
+def test_decide_reroute_still_wins_over_delay():
+    results = [route("r1", "HIGH", 100), route("r2", "MEDIUM", 120)]
+    # r2 ดีกว่าและช้าไม่เกิน 50% -> REROUTE ต้องชนะ ไม่ไปเช็ค DELAY เลยแม้เลื่อนแล้วจะดีขึ้นก็ตาม
+    assert decide(results, {3: "LOW", 6: "LOW"}) == ("r2", "REROUTE")
+
+
+def test_summary_delay_mentions_hours():
+    p1 = _point(BKK, 3, "2026-09-24T03:00:00Z", 40, 10, "HIGH")
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": "HIGH", "points": [p1]}
+    assert "3 ชม." in summary_text(main, main, "DELAY", delay_hours=3)
+    assert len(summary_text(main, main, "DELAY")) > 0  # ไม่ใส่ delay_hours ก็ต้องไม่ว่างเปล่า
 
 
 def test_summary_is_never_empty():
