@@ -1,21 +1,28 @@
-"""routing-engine (stub)
+"""routing-engine
 
-ส่วนที่ต่อไว้จริงแล้ว: ส่งทุกเส้นไป risk-decision ในคำขอเดียว แล้วประกอบ TripPlan จากผลที่ได้ (build_plan)
-ส่วนที่ยังเป็น stub: fetch_routes() ต่อจุดเป็นเส้นตรงเส้นเดียว ของจริงเรียก OSRM ดู README
+fetch_routes() หาเส้นทางจริงจาก OSRM ส่งทุกเส้นไป risk-decision ในคำขอเดียว แล้วประกอบ TripPlan (build_plan)
+ยังไม่มี: samples ทุก 20 กม., cache, DEMO_MODE ดู README
 """
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 
+import httpx
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from envelope import ApiError, call, ok, setup
-from geo import haversine_km, to_iso
+from geo import to_iso
 
 app = FastAPI(title="routing-engine")
 setup(app, "routing-engine")
 
 RISK_TIMEOUT = 30  # วินาที ตาม CONTRACT หัวข้อ 3
+OSRM_TIMEOUT = 15  # api-backend รอเรา 45 วิ หักที่รอ risk-decision 30 วิ
+OSRM_DEFAULT_URL = "https://router.project-osrm.org"
+OSRM_PARAMS = {"alternatives": "3", "overview": "full", "geometries": "geojson",
+               "annotations": "duration,distance"}
+MAX_GEOMETRY_POINTS = 500  # CONTRACT หัวข้อ 4
 
 
 class Place(BaseModel):
@@ -31,6 +38,32 @@ class PlanIn(BaseModel):
     waypoints: list[Place] = []
 
 
+def osrm_request(stops: list[Place]) -> dict:
+    """คำตอบดิบของ OSRM พิกัดใน URL เป็น lng,lat"""
+    coords = ";".join(f"{s.lng},{s.lat}" for s in stops)
+    url = f"{os.getenv('OSRM_BASE_URL', OSRM_DEFAULT_URL).rstrip('/')}/route/v1/driving/{coords}"
+    try:
+        res = httpx.get(url, params=OSRM_PARAMS, timeout=OSRM_TIMEOUT)
+        body = res.json()
+    except httpx.TimeoutException:
+        raise ApiError("UPSTREAM_TIMEOUT", "ระบบหาเส้นทางตอบไม่ทันเวลา ลองใหม่อีกครั้ง")
+    except (httpx.HTTPError, ValueError):
+        raise ApiError("UPSTREAM_ERROR", "ติดต่อระบบหาเส้นทางไม่ได้ ลองใหม่อีกครั้ง")
+    if res.status_code == 429:
+        raise ApiError("RATE_LIMITED", "ระบบหาเส้นทางมีคนใช้เยอะ รอสักครู่แล้วลองใหม่")
+    if body.get("code") != "Ok" or not body.get("routes"):
+        raise ApiError("UPSTREAM_ERROR", "หาเส้นทางไม่ได้ ลองใหม่อีกครั้ง")
+    return body
+
+
+def simplify(coords: list[list[float]], limit: int = MAX_GEOMETRY_POINTS) -> list[dict]:
+    """[lng, lat] เป็น {lat, lng} และเลือกจุดห่างเท่าๆ กันให้ไม่เกิน limit โดยเก็บจุดแรกและจุดสุดท้ายไว้เสมอ"""
+    if len(coords) > limit:
+        step = (len(coords) - 1) / (limit - 1)
+        coords = [coords[round(i * step)] for i in range(limit)]
+    return [{"lat": lat, "lng": lng} for lng, lat in coords]
+
+
 def fetch_routes(stops: list[Place]) -> list[dict]:
     """คืนเส้นทางทั้งหมด เส้นแรกต้องเป็นเส้นหลัก (เร็วที่สุด)
 
@@ -38,21 +71,22 @@ def fetch_routes(stops: list[Place]) -> list[dict]:
                stop_minutes: [นาทีสะสมตอนถึงแต่ละ stop เริ่มที่ 0], samples: [{lat, lng, minute}]}
     samples คือจุดตัวอย่างระหว่างทางประมาณทุก 20 กม. พร้อมนาทีสะสม (ไม่รวม stop)
 
-    TODO(routing-engine): เรียก OSRM แทนเส้นตรง ดู README หัวข้อ "เริ่มจากตรงไหน"
+    TODO(routing-engine): samples ทุก 20 กม. จาก legs[].annotation
     """
-    stop_minutes, distance_km = [0.0], 0.0
-    for a, b in zip(stops, stops[1:]):
-        leg = haversine_km(a.model_dump(), b.model_dump()) * 1.25  # ถนนจริงอ้อมกว่าเส้นตรง
-        distance_km += leg
-        stop_minutes.append(stop_minutes[-1] + leg / 75 * 60)
-    return [{
-        "route_id": "r1",
-        "duration_min": round(stop_minutes[-1]),
-        "distance_km": round(distance_km),
-        "geometry": [{"lat": s.lat, "lng": s.lng} for s in stops],
-        "stop_minutes": stop_minutes,
-        "samples": [],
-    }]
+    routes = []
+    for i, r in enumerate(osrm_request(stops)["routes"], start=1):
+        stop_minutes = [0.0]
+        for leg in r["legs"]:
+            stop_minutes.append(stop_minutes[-1] + leg["duration"] / 60)
+        routes.append({
+            "route_id": f"r{i}",
+            "duration_min": round(r["duration"] / 60),
+            "distance_km": round(r["distance"] / 1000),
+            "geometry": simplify(r["geometry"]["coordinates"]),
+            "stop_minutes": stop_minutes,
+            "samples": [],
+        })
+    return routes
 
 
 def risk_points(route: dict, stops: list[Place], depart: datetime) -> tuple[list[dict], list[int]]:
