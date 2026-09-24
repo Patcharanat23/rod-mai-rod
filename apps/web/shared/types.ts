@@ -90,7 +90,7 @@ export type Hazard = LatLng & {
   hazard_id: string;
   hazard_type: HazardType | string;
   severity: RiskLevel;
-  province: string;
+  province: string | null; // GDACS / USGS ไม่มีชื่อจังหวัด
   title_th: string;
   source: "OPEN_METEO" | "GDACS" | "USGS" | "THAIWATER" | "TMD" | "DERIVED" | string;
   updated_at: string;

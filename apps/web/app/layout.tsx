@@ -3,9 +3,9 @@ import { Prompt } from "next/font/google";
 import NavBar from "@/shared/NavBar";
 import "./globals.css";
 
-const prompt = Prompt({ subsets: ["thai", "latin"], weight: ["400", "500", "600"] });
+const prompt = Prompt({ subsets: ["thai", "latin"], weight: ["400", "500", "600", "700"] });
 
-export const metadata: Metadata = { title: "rod-mai-rod" };
+export const metadata: Metadata = { title: "รอดไม่รอด" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

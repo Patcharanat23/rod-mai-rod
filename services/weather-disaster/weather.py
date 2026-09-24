@@ -1,4 +1,6 @@
 """Hourly forecast from Open-Meteo for points along a route."""
+import threading
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -8,6 +10,8 @@ from geo import to_iso
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 HOURLY_VARS = "precipitation,wind_speed_10m,temperature_2m,weather_code"
 TIMEOUT_S = 8
+CACHE_TTL_S = 30 * 60
+CACHE_MAX = 5000
 
 # WMO weather codes used by Open-Meteo
 WMO_TH = {
@@ -101,18 +105,73 @@ def pick_hour(hourly: dict, t: datetime) -> tuple[dict | None, str | None]:
     return forecast, None
 
 
+# rounded coords -> (stored_at, hourly block). One block holds every forecast hour,
+# so a later request for another hour at the same place is still a hit.
+_cache: dict[tuple[float, float], tuple[float, dict]] = {}
+_lock = threading.Lock()
+_now = time.monotonic
+
+
+def cache_key(lat: float, lng: float) -> tuple[float, float]:
+    """2 decimals is about 1 km; nearby points share one forecast."""
+    return (round(lat, 2), round(lng, 2))
+
+
+def clear_cache() -> None:
+    with _lock:
+        _cache.clear()
+
+
+def _cache_get(key, now: float) -> dict | None:
+    with _lock:
+        item = _cache.get(key)
+    if item and now - item[0] < CACHE_TTL_S:
+        return item[1]
+    return None
+
+
+def _cache_put(key, hourly: dict, now: float) -> None:
+    with _lock:
+        if len(_cache) >= CACHE_MAX:
+            for k in [k for k, (t, _) in _cache.items() if now - t >= CACHE_TTL_S]:
+                del _cache[k]
+            if len(_cache) >= CACHE_MAX:
+                _cache.clear()
+        _cache[key] = (now, hourly)
+
+
 def forecast_points(points: list[tuple[float, float, datetime]]) -> tuple[list[dict | None], list[str]]:
     """Same order and same count as the input. Unknown data is None plus a warning."""
     if not points:
         return [], []
-    try:
-        hourlies = fetch_hourly([(lat, lng) for lat, lng, _ in points])
-    except (httpx.HTTPError, ValueError, KeyError, TypeError):
-        return [None] * len(points), ["WEATHER_UNAVAILABLE"]
+    now = _now()
+    keys = [cache_key(lat, lng) for lat, lng, _ in points]
+    blocks: dict = {}
+    missing = []
+    for key in dict.fromkeys(keys):  # unique, order kept
+        hourly = _cache_get(key, now)
+        if hourly is None:
+            missing.append(key)
+        else:
+            blocks[key] = hourly
+
+    warnings: list[str] = []
+    if missing:
+        try:
+            fetched = fetch_hourly(missing)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            warnings.append("WEATHER_UNAVAILABLE")
+        else:
+            for key, hourly in zip(missing, fetched):
+                _cache_put(key, hourly, now)
+                blocks[key] = hourly
 
     results: list[dict | None] = []
-    warnings: list[str] = []
-    for (_, _, t), hourly in zip(points, hourlies):
+    for (_, _, t), key in zip(points, keys):
+        hourly = blocks.get(key)
+        if hourly is None:
+            results.append(None)
+            continue
         forecast, warning = pick_hour(hourly, t)
         results.append(forecast)
         if warning and warning not in warnings:

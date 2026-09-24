@@ -3,8 +3,8 @@
 // แผนที่ตัวเดียวของทั้งเว็บ อย่า import ไฟล์นี้ตรงๆ ให้ใช้ Map จาก "@/shared/Map" (ปิด SSR ให้แล้ว)
 import "leaflet/dist/leaflet.css";
 import { useEffect, type ReactNode } from "react";
-import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, useMap, useMapEvents } from "react-leaflet";
-import type { LatLngBoundsExpression } from "leaflet";
+import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { divIcon, type LatLngBoundsExpression } from "leaflet";
 import type { LatLng } from "./types";
 
 export type MapRoute = {
@@ -20,6 +20,7 @@ export type MapMarker = {
   lat: number;
   lng: number;
   color?: string;
+  label?: string; // ตัวอักษรสั้นๆ บนหมุด เช่น "น้ำ" ไม่ใส่ = วงกลมสีธรรมดา
   popup?: ReactNode;
   onClick?: () => void;
 };
@@ -36,6 +37,18 @@ export type MapViewProps = {
   onMapClick?: (p: LatLng) => void; // ให้ผู้ใช้จิ้มเลือกตำแหน่ง
   height?: number | string;
 };
+
+const escapeHtml = (t: string) =>
+  t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+// หมุดที่มีตัวอักษร ใช้ divIcon เพราะ CircleMarker ใส่ข้อความไม่ได้
+function labelIcon(label: string, color: string) {
+  return divIcon({
+    className: "",
+    iconSize: undefined,
+    html: `<span style="display:inline-block;transform:translate(-50%,-50%);padding:2px 6px;border-radius:12px;border:2px solid #fff;background:${color};color:#fff;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4)">${escapeHtml(label)}</span>`,
+  });
+}
 
 const BANGKOK: LatLng = { lat: 13.7563, lng: 100.5018 };
 const toLeaflet = (p: LatLng): [number, number] => [p.lat, p.lng];
@@ -95,17 +108,28 @@ export default function MapView({
           eventHandlers={r.onClick ? { click: r.onClick } : undefined}
         />
       ))}
-      {markers.map((m) => (
-        <CircleMarker
-          key={m.id}
-          center={[m.lat, m.lng]}
-          radius={9}
-          pathOptions={{ color: "#fff", weight: 2, fillColor: m.color ?? "#2563eb", fillOpacity: 1 }}
-          eventHandlers={m.onClick ? { click: m.onClick } : undefined}
-        >
-          {m.popup && <Popup>{m.popup}</Popup>}
-        </CircleMarker>
-      ))}
+      {markers.map((m) =>
+        m.label ? (
+          <Marker
+            key={m.id}
+            position={[m.lat, m.lng]}
+            icon={labelIcon(m.label, m.color ?? "#2563eb")}
+            eventHandlers={m.onClick ? { click: m.onClick } : undefined}
+          >
+            {m.popup && <Popup>{m.popup}</Popup>}
+          </Marker>
+        ) : (
+          <CircleMarker
+            key={m.id}
+            center={[m.lat, m.lng]}
+            radius={9}
+            pathOptions={{ color: "#fff", weight: 2, fillColor: m.color ?? "#2563eb", fillOpacity: 1 }}
+            eventHandlers={m.onClick ? { click: m.onClick } : undefined}
+          >
+            {m.popup && <Popup>{m.popup}</Popup>}
+          </CircleMarker>
+        ),
+      )}
       <FitTo points={fitTo} />
       {onBoundsChange && <BoundsWatcher onChange={onBoundsChange} />}
       {onMapClick && <ClickWatcher onClick={onMapClick} />}
