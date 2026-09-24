@@ -1,11 +1,15 @@
-"""routing-engine (stub)
+"""routing-engine
 
-ส่วนที่ต่อไว้จริงแล้ว: ส่งทุกเส้นไป risk-decision ในคำขอเดียว แล้วประกอบ TripPlan จากผลที่ได้ (build_plan)
-ส่วนที่ยังเป็น stub: fetch_routes() ต่อจุดเป็นเส้นตรงเส้นเดียว ของจริงเรียก OSRM ดู README
+fetch_routes() หาเส้นทางจริงจาก OSRM ส่งทุกเส้นไป risk-decision ในคำขอเดียว แล้วประกอบ TripPlan (build_plan)
+ยังไม่มี: DEMO_MODE ดู README
 """
+import os
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timedelta
 from typing import Optional
 
+import httpx
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -16,6 +20,16 @@ app = FastAPI(title="routing-engine")
 setup(app, "routing-engine")
 
 RISK_TIMEOUT = 30  # วินาที ตาม CONTRACT หัวข้อ 3
+OSRM_TIMEOUT = 12  # เวลารวมที่รอ OSRM ต่อคำขอ 12 + 30 ต้องน้อยกว่า 45 ที่ api-backend รอเรา
+OSRM_DOWNLOAD_TIMEOUT = 90  # ถ้าเกิน OSRM_TIMEOUT ยังโหลดต่อเบื้องหลังจนเสร็จแล้วเก็บลง cache
+# polyline เล็กกว่า geojson ประมาณ 6 เท่า OSRM สาธารณะส่งข้อมูลมาไทยช้ามาก
+OSRM_PARAMS = {"alternatives": "3", "overview": "full", "geometries": "polyline"}
+MAX_GEOMETRY_POINTS = 500  # CONTRACT หัวข้อ 4
+SAMPLE_STEP_KM = 20  # ระยะห่างจุดที่ส่งไปประเมินความเสี่ยง
+
+_cache: dict[tuple, dict] = {}
+_pending: dict[tuple, Future] = {}
+_pool = ThreadPoolExecutor(max_workers=4)
 
 
 class Place(BaseModel):
@@ -31,28 +45,139 @@ class PlanIn(BaseModel):
     waypoints: list[Place] = []
 
 
+def route_key(stops: list[Place]) -> tuple:
+    """พิกัดทุก stop ปัดทศนิยม 3 ตำแหน่ง (ประมาณ 100 ม.) ใช้เป็น key ของ cache"""
+    return tuple((round(s.lat, 3), round(s.lng, 3)) for s in stops)
+
+
+def osrm_request(stops: list[Place]) -> dict:
+    """คำตอบดิบของ OSRM ผ่าน cache รอไม่เกิน OSRM_TIMEOUT ทริปเดียวกันที่กำลังโหลดอยู่ไม่ยิงซ้ำ"""
+    key = route_key(stops)
+    if key in _cache:
+        return _cache[key]
+    base = os.getenv("OSRM_BASE_URL")
+    if not base:
+        raise ApiError("INTERNAL_ERROR", "ยังไม่ได้ตั้งค่า OSRM_BASE_URL ใน .env")
+    job = _pending.get(key)
+    if job is None:
+        job = _pending[key] = _pool.submit(_download, base, stops, key)
+    try:
+        return job.result(timeout=OSRM_TIMEOUT)
+    except FutureTimeout:
+        raise ApiError("UPSTREAM_TIMEOUT", "ระบบหาเส้นทางตอบช้า กำลังโหลดต่อให้ ลองกด Plan อีกครั้งในอีกสักครู่")
+
+
+def _download(base: str, stops: list[Place], key: tuple) -> dict:
+    coords = ";".join(f"{s.lng},{s.lat}" for s in stops)  # OSRM ใช้ lng,lat
+    try:
+        try:
+            res = httpx.get(f"{base.rstrip('/')}/route/v1/driving/{coords}",
+                            params=OSRM_PARAMS, timeout=OSRM_DOWNLOAD_TIMEOUT)
+        except httpx.TimeoutException:
+            raise ApiError("UPSTREAM_TIMEOUT", "ระบบหาเส้นทางตอบไม่ทันเวลา ลองใหม่อีกครั้ง")
+        except httpx.HTTPError:
+            raise ApiError("UPSTREAM_ERROR", "ติดต่อระบบหาเส้นทางไม่ได้ ลองใหม่อีกครั้ง")
+        if res.status_code == 429:
+            raise ApiError("RATE_LIMITED", "ระบบหาเส้นทางมีคนใช้เยอะ รอสักครู่แล้วลองใหม่")
+        try:
+            body = res.json()
+        except ValueError:
+            raise ApiError("UPSTREAM_ERROR", "ระบบหาเส้นทางตอบผิดรูปแบบ ลองใหม่อีกครั้ง")
+        if body.get("code") == "NoRoute":
+            raise ApiError("UPSTREAM_ERROR", "หาเส้นทางทางถนนระหว่างจุดเหล่านี้ไม่ได้ ลองเลื่อนหมุดให้อยู่ใกล้ถนน")
+        if body.get("code") != "Ok" or not body.get("routes"):
+            raise ApiError("UPSTREAM_ERROR", "หาเส้นทางไม่ได้ ลองใหม่อีกครั้ง")
+        _cache[key] = body  # เก็บเฉพาะที่สำเร็จ เส้นทางไม่เปลี่ยนจึงไม่ต้องหมดอายุ
+        return body
+    finally:
+        _pending.pop(key, None)
+
+
+def decode_polyline(text: str) -> list[tuple[float, float]]:
+    """ถอด polyline ความละเอียด 5 ตำแหน่งของ OSRM เป็น [(lat, lng)] (ในรหัสเรียง lat ก่อน lng)"""
+    points, index, lat, lng = [], 0, 0, 0
+    while index < len(text):
+        for is_lng in (False, True):
+            shift = result = 0
+            while True:
+                b = ord(text[index]) - 63
+                index += 1
+                result |= (b & 0x1F) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            delta = ~(result >> 1) if result & 1 else result >> 1
+            if is_lng:
+                lng += delta
+            else:
+                lat += delta
+        points.append((lat / 1e5, lng / 1e5))
+    return points
+
+
+def simplify(points: list[tuple[float, float]], limit: int = MAX_GEOMETRY_POINTS) -> list[dict]:
+    """(lat, lng) เป็น {lat, lng} และเลือกจุดห่างเท่าๆ กันให้ไม่เกิน limit โดยเก็บจุดแรกและจุดสุดท้ายไว้เสมอ"""
+    if len(points) > limit:
+        step = (len(points) - 1) / (limit - 1)
+        points = [points[round(i * step)] for i in range(limit)]
+    return [{"lat": lat, "lng": lng} for lat, lng in points]
+
+
+def leg_bounds(points: list[tuple[float, float]], snapped: list[list[float]]) -> list[int]:
+    """index ใน geometry ของแต่ละ stop จาก waypoints[].location ([lng, lat]) ของ OSRM หาไล่ไปข้างหน้า"""
+    bounds, start = [0], 0
+    for lng, lat in snapped[1:-1]:
+        start = min(range(start, len(points)),
+                    key=lambda k: (points[k][0] - lat) ** 2 + (points[k][1] - lng) ** 2)
+        bounds.append(start)
+    return bounds + [len(points) - 1]
+
+
+def sample_points(points: list[tuple[float, float]], bounds: list[int], legs: list[dict],
+                  step_km: float = SAMPLE_STEP_KM) -> list[dict]:
+    """จุดทุก step_km ตาม geometry เต็ม นับใหม่ทุก stop ไม่รวม stop
+    เวลาของแต่ละ leg แบ่งตามสัดส่วนระยะ จุดที่ห่าง stop ถัดไปไม่ถึงครึ่ง step ข้ามไป (stop ถูกประเมินอยู่แล้ว)"""
+    samples, leg_start_min = [], 0.0
+    for leg, a, b in zip(legs, bounds, bounds[1:]):
+        seg = [haversine_km({"lat": p[0], "lng": p[1]}, {"lat": q[0], "lng": q[1]})
+               for p, q in zip(points[a:b], points[a + 1:b + 1])]
+        total, done, mark = sum(seg), 0.0, step_km
+        for k, d in enumerate(seg):
+            while d > 0 and done + d >= mark and mark <= total - step_km / 2:
+                t = (mark - done) / d
+                (lat1, lng1), (lat2, lng2) = points[a + k], points[a + k + 1]
+                samples.append({"lat": lat1 + (lat2 - lat1) * t, "lng": lng1 + (lng2 - lng1) * t,
+                                "minute": leg_start_min + mark / total * leg["duration"] / 60})
+                mark += step_km
+            done += d
+        leg_start_min += leg["duration"] / 60
+    return samples
+
+
 def fetch_routes(stops: list[Place]) -> list[dict]:
     """คืนเส้นทางทั้งหมด เส้นแรกต้องเป็นเส้นหลัก (เร็วที่สุด)
 
     แต่ละเส้น: {route_id, duration_min, distance_km, geometry: [{lat, lng}],
                stop_minutes: [นาทีสะสมตอนถึงแต่ละ stop เริ่มที่ 0], samples: [{lat, lng, minute}]}
     samples คือจุดตัวอย่างระหว่างทางประมาณทุก 20 กม. พร้อมนาทีสะสม (ไม่รวม stop)
-
-    TODO(routing-engine): เรียก OSRM แทนเส้นตรง ดู README หัวข้อ "เริ่มจากตรงไหน"
     """
-    stop_minutes, distance_km = [0.0], 0.0
-    for a, b in zip(stops, stops[1:]):
-        leg = haversine_km(a.model_dump(), b.model_dump()) * 1.25  # ถนนจริงอ้อมกว่าเส้นตรง
-        distance_km += leg
-        stop_minutes.append(stop_minutes[-1] + leg / 75 * 60)
-    return [{
-        "route_id": "r1",
-        "duration_min": round(stop_minutes[-1]),
-        "distance_km": round(distance_km),
-        "geometry": [{"lat": s.lat, "lng": s.lng} for s in stops],
-        "stop_minutes": stop_minutes,
-        "samples": [],
-    }]
+    body = osrm_request(stops)
+    routes = []
+    for i, r in enumerate(body["routes"], start=1):
+        points = decode_polyline(r["geometry"])
+        stop_minutes = [0.0]
+        for leg in r["legs"]:
+            stop_minutes.append(stop_minutes[-1] + leg["duration"] / 60)
+        routes.append({
+            "route_id": f"r{i}",
+            "duration_min": round(r["duration"] / 60),
+            "distance_km": round(r["distance"] / 1000),
+            "geometry": simplify(points),
+            "stop_minutes": stop_minutes,
+            "samples": sample_points(points, leg_bounds(points, [w["location"] for w in body["waypoints"]]),
+                                     r["legs"]),
+        })
+    return routes
 
 
 def risk_points(route: dict, stops: list[Place], depart: datetime) -> tuple[list[dict], list[int]]:
