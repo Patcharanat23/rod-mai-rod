@@ -44,10 +44,20 @@ def test_update_next_day_keeps_time_and_accepts_string_trip_no():
     assert be.patched() == [{"departure_time": "2030-01-06T01:00:00Z"}]
 
 
+def test_update_by_hours_needs_no_original_time():
+    # 22:00 ไทย เลื่อนออกไป 3 ชม. ข้ามไปวันถัดไป
+    be = FakeBackend([full_trip(1, "2030-01-05T15:00:00Z")])
+    out, _ = run("update_trip_time", {"trip_no": 1, "shift_hours": 3}, be)
+    assert be.patched() == [{"departure_time": "2030-01-05T18:00:00Z"}] and out["departure_th"] == "6 ม.ค. 01:00 น."
+    be = FakeBackend([full_trip(1, "2030-01-05T15:00:00Z")])
+    run("update_trip_time", {"trip_no": 1, "shift_hours": -2}, be)
+    assert be.patched() == [{"departure_time": "2030-01-05T13:00:00Z"}]
+
+
 def test_update_rejects_past_same_and_bad_input_without_patching():
     be = FakeBackend([full_trip(1, "2030-01-05T01:00:00Z")])
     for args in ({"trip_no": 1}, {"trip_no": 1, "time": "25:00"}, {"trip_no": 1, "shift_days": -3},
-                 {"trip_no": 1, "shift_days": "x"}):
+                 {"trip_no": 1, "shift_days": "x"}, {"trip_no": 1, "shift_hours": 400}):
         out, actions = run("update_trip_time", args, be)
         assert "error" in out and actions == []
     past = FakeBackend([full_trip(1, "2020-01-05T01:00:00Z")])
