@@ -11,7 +11,7 @@ import { api, ApiError } from "@/shared/api";
 import { riskColor } from "@/shared/risk";
 import { formatDuration, formatThaiTime } from "@/shared/time";
 import { useApi } from "@/shared/useApi";
-import type { PlanWaypoint, Trip, TripPlan } from "@/shared/types";
+import type { PlanWaypoint, RouteOption, Trip, TripPlan } from "@/shared/types";
 import RouteEmergency from "./RouteEmergency";
 import TripForm from "./TripForm";
 
@@ -22,10 +22,21 @@ export default function MyTripPage() {
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState("");
   const [summary, setSummary] = useState<TripPlan | null>(null);
+  // เส้นที่ผู้ใช้กดเลือกของแต่ละทริป ไม่มี = เส้นที่แนะนำ
+  const [routeChoice, setRouteChoice] = useState<Record<string, string>>({});
 
   if (loading || error || !trips) return <StatusBox loading={loading} error={error} onRetry={reload} />;
 
   const trip = trips.find((t) => t.trip_id === selectedId) ?? trips[0];
+  const options = trip?.plan?.route_options ?? [];
+  const selectedRoute =
+    options.find((r) => r.route_id === routeChoice[trip?.trip_id ?? ""]) ??
+    options.find((r) => r.is_recommended) ??
+    options[0];
+
+  function chooseRoute(routeId: string) {
+    if (trip) setRouteChoice((c) => ({ ...c, [trip.trip_id]: routeId }));
+  }
 
   async function plan() {
     if (!trip) return;
@@ -33,6 +44,12 @@ export default function MyTripPage() {
     setPlanError("");
     try {
       const result = await api<TripPlan>(`/trips/${trip.trip_id}/plan`, { method: "POST" });
+      // แผนใหม่ route_id เปลี่ยน กลับไปที่เส้นที่แนะนำ
+      setRouteChoice((c) => {
+        const next = { ...c };
+        delete next[trip.trip_id];
+        return next;
+      });
       await reload();
       setSummary(result);
     } catch (e) {
@@ -77,13 +94,13 @@ export default function MyTripPage() {
               <div className="warnings">ทริปถูกแก้หลังวางแผน กด Plan ใหม่เพื่อดูความเสี่ยงล่าสุด</div>
             )}
             {trip.plan && <Warnings warnings={trip.plan.warnings} />}
-            {/* TODO(web-mytrip): ให้กดเลือกเส้นอื่นได้ แล้วตัวเลขในการ์ดขวาเปลี่ยนตามเส้นที่เลือก (README ข้อ 4, 5) */}
             <Map
-              routes={(trip.plan?.route_options ?? []).map((r) => ({
+              routes={options.map((r) => ({
                 id: r.route_id,
                 points: r.geometry,
                 color: riskColor(r.risk_level),
-                highlighted: r.is_recommended,
+                highlighted: r.route_id === selectedRoute?.route_id,
+                onClick: () => chooseRoute(r.route_id),
               }))}
               markers={(trip.plan?.waypoints ?? []).map((w) => ({
                 id: w.waypoint_id,
@@ -103,10 +120,21 @@ export default function MyTripPage() {
             {planError && <p className="error-text">{planError}</p>}
             {trip.plan && (
               <>
+                {options.length > 1 && (
+                  <RoutePicker options={options} selectedId={selectedRoute?.route_id} onPick={chooseRoute} />
+                )}
+                {/* README ข้อ 5: ตัวเลขต้องตามเส้นที่เลือก ไม่ใช่ค่าบนสุดของแผน */}
                 <p>
-                  {formatDuration(trip.plan.duration_min)}{" "}
-                  <RiskBadge level={trip.plan.risk_level} score={trip.plan.risk_score} />
+                  {formatDuration(selectedRoute?.duration_min ?? trip.plan.duration_min)}
+                  {selectedRoute && ` · ${selectedRoute.distance_km.toFixed(0)} กม.`}{" "}
+                  <RiskBadge
+                    level={selectedRoute ? selectedRoute.risk_level : trip.plan.risk_level}
+                    score={selectedRoute ? selectedRoute.risk_score : trip.plan.risk_score}
+                  />
                 </p>
+                {selectedRoute && !selectedRoute.is_recommended && (
+                  <p className="muted">ข้อความสรุปและอากาศรายจุดด้านล่างเป็นของเส้นที่แนะนำ</p>
+                )}
                 <p>{trip.plan.summary_th}</p>
                 <RouteEmergency plan={trip.plan} />
                 <WaypointList waypoints={trip.plan.waypoints} />
@@ -119,6 +147,28 @@ export default function MyTripPage() {
 
       {summary && <PlanSummaryPopup plan={summary} onClose={() => setSummary(null)} />}
     </>
+  );
+}
+
+type RoutePickerProps = { options: RouteOption[]; selectedId?: string; onPick: (id: string) => void };
+
+// ปุ่มเลือกเส้นทาง กดเส้นบนแผนที่ก็ได้ผลเหมือนกัน
+function RoutePicker({ options, selectedId, onPick }: RoutePickerProps) {
+  return (
+    <div className="row" style={{ margin: "12px 0" }}>
+      {options.map((r, i) => (
+        <button
+          key={r.route_id}
+          className={`btn ${r.route_id === selectedId ? "" : "btn-outline"}`}
+          style={{ padding: "6px 12px", fontSize: 13 }}
+          onClick={() => onPick(r.route_id)}
+          aria-pressed={r.route_id === selectedId}
+        >
+          เส้นที่ {i + 1}
+          {r.is_recommended ? " (แนะนำ)" : ""} · {formatDuration(r.duration_min)}
+        </button>
+      ))}
+    </div>
   );
 }
 
