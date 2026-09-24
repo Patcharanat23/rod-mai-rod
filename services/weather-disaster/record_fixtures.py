@@ -1,8 +1,9 @@
 """Record real responses for DEMO_MODE. Needs internet.
 
 Reads the demo routes saved by routing-engine, then stores the Open-Meteo forecast for
-points every STEP_KM along every route, the 3x3 area around each demo city, and the
-current GDACS and USGS feeds, all under fixtures/.
+points every STEP_KM along every route, the 3x3 area around each demo city and the hill
+points used for landslide estimates, plus the current GDACS and USGS feeds, all under
+fixtures/.
 """
 import json
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from pathlib import Path
 import httpx
 
 import hazard_feeds
+import landslide
 import weather
 from geo import haversine_km, to_iso
 
@@ -80,6 +82,7 @@ def demo_keys() -> list[tuple[float, float]]:
             points.extend(sample(line, STEP_KM))
     for lat, lng in CITIES:
         points.extend(weather.area_grid(lat, lng))
+    points.extend((lat, lng) for _, lat, lng, _ in landslide.HILL_POINTS)
     return list(dict.fromkeys(weather.cache_key(lat, lng) for lat, lng in points))
 
 
