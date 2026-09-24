@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 import app as routing
-from conftest import load
+from conftest import saved
 from envelope import ApiError
 
 REAL_OSRM_REQUEST = routing.osrm_request  # เก็บไว้ก่อน conftest แทนด้วยตัวอ่าน fixture
@@ -70,7 +70,7 @@ def _osrm_replies(monkeypatch, handler):
 
 
 def _ok(*a):
-    return httpx.Response(200, json=load("bkk_cnx.json"))
+    return httpx.Response(200, json=saved([BKK, CNX]))
 
 
 def _raise(exc):
