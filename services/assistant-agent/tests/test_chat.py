@@ -37,6 +37,14 @@ def test_no_llm_still_answers_safety_from_documents(monkeypatch):
     assert "อย่าขับผ่านน้ำ" in data["reply"] and "ปภ." in data["reply"]
 
 
+def test_no_llm_trip_command_lists_commands_not_documents(monkeypatch):
+    no_llm(monkeypatch)
+    monkeypatch.setattr(agent, "safety_search", lambda q: [SNIPPET])
+    data = client.post("/api/v1/chat", headers=AUTH, json={"message": "ทริป 1 ออกเร็วขึ้น 1 ชั่วโมง"}).json()["data"]
+    assert data["warnings"] == ["LLM_UNAVAILABLE"] and data["actions"] == []
+    assert "เลื่อน Trip 01" in data["reply"] and "อย่าขับผ่านน้ำ" not in data["reply"]
+
+
 def test_document_reply_has_no_double_bullets_and_names_each_source_once():
     rows = [dict(SNIPPET, snippet_th="- ห้ามสตาร์ทรถซ้ำ"), dict(SNIPPET, snippet_th="- ย้ายไปที่สูง"),
             dict(SNIPPET, snippet_th="จอดรถที่โล่ง", source="กรมทรัพยากรธรณี")]
