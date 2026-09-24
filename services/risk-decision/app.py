@@ -3,7 +3,8 @@
 ส่วนที่ต่อไว้จริงแล้ว: ขอพยากรณ์ ณ เวลาที่ไปถึงของทุกจุดทุกเส้นจาก weather-disaster ในคำขอเดียว
 คิดระดับตามเกณฑ์ CONTRACT หัวข้อ 4 และจุดที่ไม่มีข้อมูลเป็น null พร้อม WEATHER_UNAVAILABLE
 หมุดภัยในรัศมี 20 กม. รอบแต่ละจุดก็รวมเข้ากับระดับความเสี่ยงแล้ว (7.1)
-ที่ยังต้องทำ: ดูที่ TODO(risk-decision) ในไฟล์นี้ (risk_score, DELAY, summary_th)
+risk_score คิดจากความรุนแรงจริงของปัจจัยที่แย่ที่สุดแล้ว ไม่ใช่ค่าคงที่ (7.2)
+ที่ยังต้องทำ: ดูที่ TODO(risk-decision) ในไฟล์นี้ (summary_th, DELAY)
 """
 from datetime import datetime
 from typing import Optional
@@ -80,6 +81,46 @@ def point_level(forecast: Optional[dict], hazards: list[dict]) -> Optional[str]:
         return None
     hazard_level = worst([h["severity"] for h in hazards])
     return worst([rain_level(forecast["rain_mm_per_h"]), wind_level(forecast["wind_kmh"]), hazard_level])
+
+
+def _severity_in_band(value: float, medium: float, high_above: float) -> float:
+    """เศษส่วน 0..1 ว่าค่าจริงลึกแค่ไหนในช่วงของระดับตัวเอง ใกล้ขอบบนของช่วง = ใกล้ 1
+    ช่วง HIGH ไม่มีขอบบนตายตัวใน CONTRACT เลยใช้ความกว้างของช่วง MEDIUM เป็นสเกลอ้างอิง แล้วอิ่มตัวที่ 1"""
+    span = high_above - medium
+    if value <= medium:
+        return max(0.0, min(1.0, value / medium)) if medium else 0.0
+    if value <= high_above:
+        return (value - medium) / span
+    return min(1.0, (value - high_above) / span)
+
+
+def rain_severity(mm_per_h: float) -> float:
+    return _severity_in_band(mm_per_h, RAIN_MEDIUM, RAIN_HIGH_ABOVE)
+
+
+def wind_severity(kmh: float) -> float:
+    return _severity_in_band(kmh, WIND_MEDIUM, WIND_HIGH_ABOVE)
+
+
+def hazard_severity(point: dict, hazards: list[dict], radius_km: float = HAZARD_RADIUS_KM) -> float:
+    """หมุดภัยที่รุนแรงที่สุดยิ่งอยู่ใกล้จุดเท่าไรยิ่งรุนแรง (ชิดจุด = 1, ชิดขอบรัศมี = 0)"""
+    worst_sev = worst([h["severity"] for h in hazards])
+    if worst_sev is None:
+        return 0.0
+    nearest = min(haversine_km(point, h) for h in hazards if h["severity"] == worst_sev)
+    return max(0.0, min(1.0, 1 - nearest / radius_km))
+
+
+def point_severity(forecast: dict, hazards: list[dict], point: dict, level: str) -> float:
+    """severity 0..1 จากปัจจัยที่ทำให้ได้ level นี้ (ปัจจัยที่แย่ที่สุด ถ้าเสมอกันหลายตัวเอาค่าสูงสุด)"""
+    candidates = []
+    if rain_level(forecast["rain_mm_per_h"]) == level:
+        candidates.append(rain_severity(forecast["rain_mm_per_h"]))
+    if wind_level(forecast["wind_kmh"]) == level:
+        candidates.append(wind_severity(forecast["wind_kmh"]))
+    if worst([h["severity"] for h in hazards]) == level:
+        candidates.append(hazard_severity(point, hazards))
+    return max(candidates) if candidates else 0.0
 
 
 def decide(results: list[dict]) -> tuple[str, str]:
@@ -162,9 +203,9 @@ def evaluate(body: EvaluateIn):
         for _ in route.points:
             point_hazards = nearby_hazards(flat[i], hazards)
             level = point_level(forecasts[i], point_hazards)
-            # TODO(risk-decision): severity จากค่าจริงแทน 0.3 (ยิ่งใกล้ขอบบนของระดับ score ยิ่งสูง)
+            severity = point_severity(forecasts[i], point_hazards, flat[i], level) if level else None
             points.append({**flat[i], "forecast": forecasts[i], "hazards": point_hazards, "risk_level": level,
-                           "risk_score": score_in_band(level, 0.3) if level else None})
+                           "risk_score": score_in_band(level, severity) if level else None})
             i += 1
         if any(p["risk_level"] is None for p in points):
             warnings.append("WEATHER_UNAVAILABLE")
