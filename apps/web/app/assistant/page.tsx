@@ -27,9 +27,11 @@ const ACTION_TEXT: Record<ChatAction["type"], string> = {
 };
 
 const BUBBLE_STYLE = {
-  user: { alignSelf: "flex-end", background: "#2563eb", color: "#fff" },
-  assistant: { alignSelf: "flex-start", background: "#f3f4f6", color: "#1f2937" },
+  user: { background: "var(--grad)", color: "#fff" },
+  assistant: { background: "#f3f4f6", color: "#1f2937" },
 } as const;
+
+const AVATAR_SRC = "/mascot/nong-taem-avatar.png";
 
 // actions เก็บไว้แสดงการ์ดเท่านั้น ไม่ส่งกลับไปใน history
 type Message = ChatMessage & { actions?: ChatAction[] };
@@ -98,7 +100,10 @@ export default function AssistantPage() {
 
   return (
     <div className="card" style={{ maxWidth: 760, margin: "0 auto" }}>
-      <h3>ผู้ช่วยวางแผนทริป</h3>
+      <h3 className="row" style={{ gap: 10 }}>
+        <img src={AVATAR_SRC} alt="" width={40} height={40} style={{ borderRadius: "50%", objectFit: "cover" }} />
+        คุยกับน้องแต้ม
+      </h3>
       <Warnings warnings={lastReply?.warnings} />
       {lastReply?.warnings?.includes("LLM_UNAVAILABLE") && (
         <div className="card" style={{ marginBottom: 12, background: "#f9fafb" }}>
@@ -121,18 +126,31 @@ export default function AssistantPage() {
         {messages.length === 0 && !busy && <p className="muted">ลองกดคำถามตัวอย่างด้านล่าง หรือพิมพ์คำถามเอง</p>}
         {messages.map((m, i) => (
           <div key={i} style={{ display: "flex", flexDirection: "column" }}>
-            {/* แสดงเป็นข้อความธรรมดา ห้ามใช้ dangerouslySetInnerHTML (README ข้อ 4) */}
             <div
               style={{
-                ...BUBBLE_STYLE[m.role],
-                maxWidth: "80%",
-                padding: "8px 12px",
-                borderRadius: 12,
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                display: "flex",
+                gap: 8,
+                alignItems: "flex-end",
+                maxWidth: "85%",
               }}
             >
-              {m.content}
+              {m.role === "assistant" && (
+                <img src={AVATAR_SRC} alt="น้องแต้ม" width={32} height={32} style={{ borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+              )}
+              {/* แสดงเป็นข้อความธรรมดา ห้ามใช้ dangerouslySetInnerHTML (README ข้อ 4) */}
+              <div
+                style={{
+                  ...BUBBLE_STYLE[m.role],
+                  padding: "8px 12px",
+                  borderRadius: 12,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  minWidth: 0,
+                }}
+              >
+                {m.content}
+              </div>
             </div>
             {m.actions && <ActionCards actions={m.actions} />}
           </div>
