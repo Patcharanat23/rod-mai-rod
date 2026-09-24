@@ -17,6 +17,9 @@ const SAMPLE_PROMPTS = [
   "น้ำท่วมระหว่างทางต้องทำยังไง",
 ];
 
+// คำสั่งแบบกฎตายตัวของ assistant-agent ใช้ได้แม้ LLM ล่ม (README ข้อ 6)
+const OFFLINE_COMMANDS = ["เลื่อน Trip 01 ไปวันถัดไป", "เลื่อน Trip 01 เป็นช่วงเช้า", "Trip 01 อากาศเป็นยังไง"];
+
 const ACTION_TEXT: Record<ChatAction["type"], string> = {
   TRIP_CREATED: "ถูกสร้างแล้ว",
   TRIP_UPDATED: "ถูกแก้แล้ว",
@@ -85,6 +88,20 @@ export default function AssistantPage() {
     <div className="card" style={{ maxWidth: 760, margin: "0 auto" }}>
       <h3>ผู้ช่วยวางแผนทริป</h3>
       <Warnings warnings={lastReply?.warnings} />
+      {lastReply?.warnings?.includes("LLM_UNAVAILABLE") && (
+        <div className="card" style={{ marginBottom: 12, background: "#f9fafb" }}>
+          <div className="muted" style={{ marginBottom: 8 }}>
+            ระบบยังทำงานอยู่ ลองใช้คำสั่งเหล่านี้ได้เลย
+          </div>
+          <div className="row">
+            {OFFLINE_COMMANDS.map((c) => (
+              <button key={c} className="btn" style={{ fontSize: 14 }} onClick={() => send(c)} disabled={busy}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ minHeight: 300 }}>
         {messages.length === 0 && !busy && <p className="muted">ลองกดคำถามตัวอย่างด้านล่าง หรือพิมพ์คำถามเอง</p>}
         {messages.map((m, i) => (
