@@ -275,6 +275,8 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
   "contacts": [{ "name_th": "สายด่วนนิรภัย ปภ.", "phone": "1784" }] }
 ```
 
+`province` เป็น `null` ได้ เมื่อแหล่งข้อมูลไม่บอกจังหวัด (GDACS, USGS) หน้าเว็บต้องซ่อนส่วนนั้น ห้ามแสดงคำว่า null
+
 `source` ของ Hazard ที่ใช้ได้: `OPEN_METEO`, `GDACS`, `USGS`, `THAIWATER`, `TMD`, `DERIVED` (ประเมินเองจากข้อมูลอื่น เช่น เสี่ยงดินถล่มจากฝนสะสม ต้องบอกผู้ใช้ว่าเป็นการประเมิน)
 คำตอบของ `GET /hazards`: `{"hazards": [Hazard...], "warnings": []}`
 
