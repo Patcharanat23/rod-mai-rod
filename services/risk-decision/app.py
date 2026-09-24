@@ -6,6 +6,8 @@
 risk_score คิดจากความรุนแรงจริงของปัจจัยที่แย่ที่สุดแล้ว ไม่ใช่ค่าคงที่ (7.2)
 summary_th บอกสาเหตุ ระยะทางจากจุดเริ่มต้น เวลาไทยโดยประมาณ และควรทำอะไรแล้ว (7.3)
 DELAY (เลื่อนออก +3/+6 ชม. เช็คเส้นหลักอย่างเดียว) ก็ทำแล้วเช่นกัน (7.4 เสริม)
+แก้แล้วตามรีวิว PR #40 รอบ 1: จุดไม่มีข้อมูลตอนเลื่อนเวลาไม่ถูกนับเป็นปลอดภัยอีกต่อไป และ
+warning ของจุดเลื่อนเวลาไม่รั่วไปปนกับจุดจริงแล้ว
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -126,6 +128,20 @@ def point_severity(forecast: dict, hazards: list[dict], point: dict, level: str)
     return max(candidates) if candidates else 0.0
 
 
+def delayed_route_level(forecasts: list[Optional[dict]], point_hazards_list: list[list[dict]]) -> Optional[str]:
+    """ระดับเส้นหลักถ้าเลื่อนเวลาออกไป ต่างจาก worst() ตรงที่ไม่ข้าม None: ถ้าจุดไหนไม่มีพยากรณ์
+    ณ เวลาที่เลื่อนไป ถือว่าช่วงเวลานั้นใช้ตัดสิน DELAY ไม่ได้เลย (คืน None) เพราะ worst() เดิมข้าม
+    จุดที่ไม่มีข้อมูลไปคิดจากจุดที่เหลือ ถ้าจุดที่ไม่มีข้อมูลพอดีเป็นจุดที่เสี่ยงที่สุด เส้นจะดูปลอดภัย
+    ทั้งที่จริงคือ "ไม่รู้" ซึ่งผิดหลัก CONTRACT ที่ห้ามนับไม่มีข้อมูลเป็นปลอดภัย"""
+    levels = []
+    for forecast, hazards in zip(forecasts, point_hazards_list):
+        level = point_level(forecast, hazards)
+        if level is None:
+            return None
+        levels.append(level)
+    return worst(levels)
+
+
 def best_delay_hours(main_level: str, delay_levels: dict[int, Optional[str]]) -> Optional[int]:
     """จำนวนชั่วโมงที่เลื่อนแล้วน้อยที่สุด (3 ก่อน 6) ที่ทำให้ระดับเส้นหลักดีขึ้นกว่า main_level ถ้าไม่มีคืน None"""
     for hours in sorted(delay_levels):
@@ -217,7 +233,9 @@ def summary_text(main: dict, recommended: dict, recommendation: str, delay_hours
 
 
 def fetch_forecasts(points: list[dict]) -> tuple[list[Optional[dict]], list[str]]:
-    """พยากรณ์ของทุกจุดเรียงตามลำดับที่ส่งไป จุดที่ไม่มีข้อมูลเป็น None"""
+    """พยากรณ์ของทุกจุดเรียงตามลำดับที่ส่งไป จุดที่ไม่มีข้อมูลเป็น None
+    ไม่ส่งต่อ WEATHER_UNAVAILABLE จาก weather-disaster ตรงๆ (คำขอนี้อาจมีจุดเลื่อนเวลาของ DELAY
+    ปนอยู่ ไม่รู้ว่า warning มาจากจุดไหน) ผู้เรียกเช็คจุดจริงของตัวเองแล้วใส่ warning เองอยู่แล้ว"""
     try:
         data = call("WEATHER_DISASTER_URL", "POST", "/api/v1/forecast/points", timeout=WEATHER_TIMEOUT,
                     json={"points": [{"lat": p["lat"], "lng": p["lng"], "time": p["eta"]} for p in points]})
@@ -226,7 +244,7 @@ def fetch_forecasts(points: list[dict]) -> tuple[list[Optional[dict]], list[str]
     forecasts = [p.get("forecast") for p in data["points"]]
     if len(forecasts) != len(points):
         return [None] * len(points), ["WEATHER_UNAVAILABLE"]
-    return forecasts, data.get("warnings", [])
+    return forecasts, [w for w in data.get("warnings", []) if w != "WEATHER_UNAVAILABLE"]
 
 
 def fetch_hazards(points: list[dict]) -> tuple[list[dict], list[str]]:
@@ -293,8 +311,8 @@ def evaluate(body: EvaluateIn):
                         "risk_level": worst([p["risk_level"] for p in points]),
                         "risk_score": max(scores) if scores else None, "points": points})
 
-    delay_levels = {hours: worst([point_level(offset_forecasts[hours][j], main_point_hazards[j])
-                                   for j in range(n_main)]) for hours in DELAY_OFFSET_HOURS}
+    delay_levels = {hours: delayed_route_level(offset_forecasts[hours], main_point_hazards)
+                     for hours in DELAY_OFFSET_HOURS}
 
     recommended_id, recommendation = decide(results, delay_levels)
     recommended = next(r for r in results if r["route_id"] == recommended_id)

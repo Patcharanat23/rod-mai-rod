@@ -1,8 +1,8 @@
 import pytest
 
 from app import (_risk_cause_th, _thai_time_th, _worst_point_and_distance, best_delay_hours, decide,
-                  hazard_severity, nearby_hazards, point_level, point_severity, rain_level, rain_severity,
-                  score_in_band, summary_text, wind_level, wind_severity, worst)
+                  delayed_route_level, hazard_severity, nearby_hazards, point_level, point_severity,
+                  rain_level, rain_severity, score_in_band, summary_text, wind_level, wind_severity, worst)
 from geo import haversine_km, score_to_level
 
 EARTH_DEG_KM = 111.194926644  # กม.ต่อ 1 องศาละติจูด (R * pi/180, R=6371 กม.)
@@ -214,6 +214,17 @@ def test_summary_avoid_and_delay_say_what_to_do():
 
 
 # --- 7.4: DELAY (เสริม) ---
+
+def test_delayed_route_level_none_if_any_point_missing_forecast():
+    # จุดเสี่ยงที่สุดดันเป็นจุดที่ไม่มีพยากรณ์พอดี ห้ามคิดว่าเส้นนี้ปลอดภัย (แก้รีวิว PR #40 ข้อ 1)
+    forecasts = [{"rain_mm_per_h": 2, "wind_kmh": 10}, None]
+    assert delayed_route_level(forecasts, [[], []]) is None
+
+
+def test_delayed_route_level_worst_when_every_point_known():
+    forecasts = [{"rain_mm_per_h": 2, "wind_kmh": 10}, {"rain_mm_per_h": 40, "wind_kmh": 10}]
+    assert delayed_route_level(forecasts, [[], []]) == "HIGH"
+
 
 def test_best_delay_hours_prefers_earlier_improvement():
     assert best_delay_hours("HIGH", {3: "MEDIUM", 6: "LOW"}) == 3
