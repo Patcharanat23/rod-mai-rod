@@ -79,7 +79,7 @@ export type TripInput = {
 
 export type AreaWeather = {
   center: LatLng;
-  cells: (LatLng & { forecast: Forecast })[];
+  cells: (LatLng & { forecast: Forecast | null })[];
   updated_at: string | null;
   warnings: Warning[];
 };

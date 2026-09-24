@@ -25,7 +25,8 @@ export default function AreaWeather() {
           <Map
             center={pos}
             zoom={9}
-            markers={(data?.cells ?? []).map((c, i) => ({
+            // cell ที่ไม่มีพยากรณ์ไม่ต้องวาด แถบ Warnings บอกผู้ใช้แล้ว
+            markers={(data?.cells ?? []).flatMap((c) => (c.forecast ? [{ ...c, forecast: c.forecast }] : [])).map((c, i) => ({
               id: String(i),
               lat: c.lat,
               lng: c.lng,
