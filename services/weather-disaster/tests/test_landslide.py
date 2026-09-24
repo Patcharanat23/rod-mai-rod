@@ -126,7 +126,7 @@ def test_only_hill_points_in_the_box(rain):
 
 
 def test_box_without_hills_makes_no_forecast_request(rain):
-    hazards({"min_lat": 13.5, "min_lng": 100.3, "max_lat": 13.9, "max_lng": 100.7})  # Bangkok
+    landslide.landslide_hazards((13.5, 100.3, 13.9, 100.7))  # Bangkok
     assert rain["calls"] == 0
 
 
