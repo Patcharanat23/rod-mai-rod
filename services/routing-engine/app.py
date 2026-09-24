@@ -1,12 +1,14 @@
 """routing-engine
 
 fetch_routes() หาเส้นทางจริงจาก OSRM ส่งทุกเส้นไป risk-decision ในคำขอเดียว แล้วประกอบ TripPlan (build_plan)
-ยังไม่มี: DEMO_MODE ดู README
+DEMO_MODE=true อ่านคำตอบ OSRM ที่บันทึกไว้ใน fixtures/ ไม่เรียกเน็ตเลย
 """
+import json
 import os
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -26,6 +28,7 @@ OSRM_DOWNLOAD_TIMEOUT = 90  # ถ้าเกิน OSRM_TIMEOUT ยังโห
 OSRM_PARAMS = {"alternatives": "3", "overview": "full", "geometries": "polyline"}
 MAX_GEOMETRY_POINTS = 500  # CONTRACT หัวข้อ 4
 SAMPLE_STEP_KM = 20  # ระยะห่างจุดที่ส่งไปประเมินความเสี่ยง
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 _cache: dict[tuple, dict] = {}
 _pending: dict[tuple, Future] = {}
@@ -50,10 +53,21 @@ def route_key(stops: list[Place]) -> tuple:
     return tuple((round(s.lat, 3), round(s.lng, 3)) for s in stops)
 
 
+def fixture_path(key: tuple) -> Path:
+    """ชื่อไฟล์คือพิกัดทุก stop ตาม route_key เช่น 13.756_100.502__18.788_98.985.json"""
+    return FIXTURES / ("__".join(f"{lat:.3f}_{lng:.3f}" for lat, lng in key) + ".json")
+
+
 def osrm_request(stops: list[Place]) -> dict:
     """คำตอบดิบของ OSRM ผ่าน cache รอไม่เกิน OSRM_TIMEOUT ทริปเดียวกันที่กำลังโหลดอยู่ไม่ยิงซ้ำ"""
     key = route_key(stops)
     if key in _cache:
+        return _cache[key]
+    if os.getenv("DEMO_MODE", "false").lower() == "true":
+        path = fixture_path(key)
+        if not path.exists():
+            raise ApiError("UPSTREAM_ERROR", "โหมดสาธิตมีเฉพาะทริปตัวอย่าง ลองกรุงเทพ > เชียงใหม่ หรือแวะนครสวรรค์")
+        _cache[key] = json.loads(path.read_text())
         return _cache[key]
     base = os.getenv("OSRM_BASE_URL")
     if not base:

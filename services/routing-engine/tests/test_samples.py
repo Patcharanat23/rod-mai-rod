@@ -1,5 +1,5 @@
 import app as routing
-from conftest import load
+from conftest import saved
 from geo import haversine_km
 
 BKK = routing.Place(lat=13.7563, lng=100.5018)
@@ -35,7 +35,7 @@ def test_count_restarts_at_each_stop():
 
 
 def test_leg_bounds_find_waypoint_on_the_road():
-    body = load("bkk_nsn_cnx.json")
+    body = saved([BKK, NSN, CNX])
     points = routing.decode_polyline(body["routes"][0]["geometry"])
     bounds = routing.leg_bounds(points, [w["location"] for w in body["waypoints"]])
     assert bounds[0] == 0 and bounds[-1] == len(points) - 1
@@ -55,7 +55,7 @@ def test_real_route_samples_about_every_20_km_on_the_road():
 
 
 def test_samples_lie_on_the_road():
-    body = load("bkk_cnx.json")
+    body = saved([BKK, CNX])
     road = routing.decode_polyline(body["routes"][0]["geometry"])
     for s in routing.fetch_routes([BKK, CNX])[0]["samples"]:
         nearest = min(haversine_km(s, {"lat": lat, "lng": lng}) for lat, lng in road[::5])

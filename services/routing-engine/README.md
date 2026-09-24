@@ -14,16 +14,28 @@ pip install -r requirements.txt
 uvicorn app:app --reload --port 8000
 ```
 
+## DEMO_MODE และ fixture
+
+`DEMO_MODE=true` อ่านคำตอบ OSRM จาก `fixtures/` ไม่เรียกเน็ตเลย ทริปที่ไม่มีไฟล์ได้ `UPSTREAM_ERROR` บอกว่าโหมดสาธิตมีทริปไหนบ้าง
+มีให้แล้ว 2 ทริป: กรุงเทพ > เชียงใหม่ และ กรุงเทพ > นครสวรรค์ > เชียงใหม่ เทสต์ทุกข้อใช้ไฟล์ชุดเดียวกันนี้ (`tests/conftest.py`)
+ชื่อไฟล์คือพิกัดทุกจุดปัดทศนิยม 3 ตำแหน่ง เรียง ต้นทาง หมุด ปลายทาง เป็น `lat_lng` คั่นด้วย `__` (ใน URL เป็น `lng,lat`) เพิ่มทริปใหม่:
+
+```bash
+curl -s "https://router.project-osrm.org/route/v1/driving/100.5018,13.7563;98.9853,18.7883?alternatives=3&overview=full&geometries=polyline" \
+  -o "fixtures/13.756_100.502__18.788_98.985.json"
+```
+
 ## เริ่มจากตรงไหน
 
 ส่วนที่คุยกับ risk-decision และประกอบ `TripPlan` (`risk_points`, `build_plan`) เขียนไว้แล้ว มีเทสต์ใน `tests/`
 งานหลักคือแก้ `fetch_routes()` ให้คืนเส้นทางจริงในรูปแบบเดิม ทำตามลำดับนี้:
 
 1. เรียก OSRM (ไม่ต้องใช้ key ลองแล้วว่ากรุงเทพ-เชียงใหม่ได้ 2 เส้น)
-   `GET {OSRM_BASE_URL}/route/v1/driving/{lng},{lat};{lng},{lat};...?alternatives=3&overview=full&geometries=geojson&annotations=duration,distance`
+   `GET {OSRM_BASE_URL}/route/v1/driving/{lng},{lat};{lng},{lat};...?alternatives=3&overview=full&geometries=polyline`
+   (polyline เล็กกว่า geojson ประมาณ 6 เท่า OSRM สาธารณะส่งข้อมูลมาไทยช้ามาก)
    พิกัดใน URL เป็น `lng,lat` คั่นหลายจุดด้วย `;` และถ้ามีหมุดระหว่างทาง OSRM มักให้เส้นเดียว (ไม่เป็นไร ส่ง warning ตามข้อ 8)
 2. `stop_minutes` ได้จาก `legs[].duration` (วินาที) สะสมกัน
-3. `samples` ไล่ตาม `legs[].annotation.distance` / `duration` ทีละช่วง เก็บจุดทุกประมาณ 20 กม. พร้อมนาทีสะสม
+3. `samples` ไล่ geometry เต็มคิดระยะด้วย `haversine_km` เก็บจุดทุกประมาณ 20 กม. เวลาแบ่งจาก `legs[].duration` ตามสัดส่วนระยะ
 4. ย่อ `geometry` ให้ไม่เกิน 500 จุด แล้วแปลง `[lng, lat]` เป็น `{lat, lng}`
 5. `pytest` ต้องผ่าน และ `make smoke` ต้องผ่าน
 
