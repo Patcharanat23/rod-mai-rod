@@ -101,7 +101,8 @@ function HazardPopup({ h }: { h: Hazard }) {
         <div>
           <strong>{h.title_th}</strong>
           {/* ข้อมูลประเมินห้ามดูเหมือนประกาศทางการ (README ข้อ 4) */}
-          {derived && <strong style={{ color: "#b45309" }}> (ประเมิน)</strong>}
+          {/* weather-disaster อาจใส่คำว่าประเมินในชื่อมาแล้ว ไม่ต้องต่อซ้ำ */}
+          {derived && !h.title_th.includes("ประเมิน") && <strong style={{ color: "#b45309" }}> (ประเมิน)</strong>}
         </div>
       </div>
       <div className="row" style={{ gap: 6, margin: "4px 0" }}>
