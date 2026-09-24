@@ -13,6 +13,7 @@ import { formatDuration, formatThaiTime } from "@/shared/time";
 import { useApi } from "@/shared/useApi";
 import type { PlanWaypoint, RouteOption, Trip, TripPlan } from "@/shared/types";
 import RouteEmergency from "./RouteEmergency";
+import TripActions from "./TripActions";
 import TripForm from "./TripForm";
 
 export default function MyTripPage() {
@@ -140,7 +141,20 @@ export default function MyTripPage() {
                 <WaypointList waypoints={trip.plan.waypoints} />
               </>
             )}
-            {/* TODO(web-mytrip): แก้ทริป (PATCH) และลบทริป (DELETE) */}
+            <TripActions
+              key={trip.trip_id}
+              trip={trip}
+              onUpdated={async () => {
+                // รายการเรียงตามเวลาออกเดินทาง แก้เวลาแล้วลำดับเปลี่ยน ต้องจำทริปนี้ไว้ ไม่งั้นหน้าจอกระโดดไปทริปอื่น
+                setSelectedId(trip.trip_id);
+                await reload();
+              }}
+              onDeleted={async () => {
+                setSelectedId(null);
+                setSummary(null);
+                await reload();
+              }}
+            />
           </div>
         </div>
       )}
