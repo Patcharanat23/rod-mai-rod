@@ -32,6 +32,7 @@ OSRM_PARAMS = {"alternatives": "3", "overview": "full", "geometries": "polyline"
 MAX_GEOMETRY_POINTS = 500  # CONTRACT หัวข้อ 4
 SAMPLE_STEP_KM = 20  # ระยะห่างจุดที่ส่งไปประเมินความเสี่ยง
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+DEMO_MATCH_KM = 15  # เท่ากับของ weather-disaster บนเวทีจิ้มแผนที่ให้ตรงระดับ 100 ม. ไม่ได้
 # เส้นเลี่ยง (งาน 5.4) ทำเมื่อได้เส้นเดียวและเส้นนั้นอยู่ในระดับเหล่านี้
 DETOUR_LEVELS = {"HIGH"}
 DETOUR_OFFSET_KM = 50  # ระยะที่ดันจุดผ่านออกข้างเส้นเดิม
@@ -68,6 +69,19 @@ def fixture_path(key: tuple) -> Path:
     return FIXTURES / ("__".join(f"{lat:.3f}_{lng:.3f}" for lat, lng in key) + ".json")
 
 
+def nearest_fixture(key: tuple) -> Optional[Path]:
+    """ทริปที่บันทึกไว้ซึ่งมีจำนวนจุดเท่ากันและทุกจุดห่างไม่เกิน DEMO_MATCH_KM เลือกที่ใกล้รวมน้อยที่สุด"""
+    best, best_km = None, None
+    for path in FIXTURES.glob("*.json"):
+        saved = [tuple(map(float, part.split("_"))) for part in path.stem.split("__")]
+        if len(saved) != len(key):
+            continue
+        dists = [haversine_km({"lat": a[0], "lng": a[1]}, {"lat": b[0], "lng": b[1]}) for a, b in zip(key, saved)]
+        if max(dists) <= DEMO_MATCH_KM and (best_km is None or sum(dists) < best_km):
+            best, best_km = path, sum(dists)
+    return best
+
+
 def osrm_request(stops: list[Place]) -> dict:
     """คำตอบดิบของ OSRM ผ่าน cache รอไม่เกิน OSRM_TIMEOUT ทริปเดียวกันที่กำลังโหลดอยู่ไม่ยิงซ้ำ"""
     key = route_key(stops)
@@ -76,6 +90,8 @@ def osrm_request(stops: list[Place]) -> dict:
     if os.getenv("DEMO_MODE", "false").lower() == "true":
         path = fixture_path(key)
         if not path.exists():
+            path = nearest_fixture(key)
+        if path is None:
             raise ApiError("UPSTREAM_ERROR", "โหมดสาธิตมีเฉพาะทริปตัวอย่าง ลองกรุงเทพ > เชียงใหม่ หรือแวะนครสวรรค์")
         _cache[key] = json.loads(path.read_text())
         return _cache[key]
