@@ -2,6 +2,7 @@
 import os
 from typing import Optional
 
+from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 SCHEMA = """
@@ -35,7 +36,8 @@ def init_db(timeout: float = 10) -> None:
     url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("ยังไม่ได้ตั้งค่า DATABASE_URL ใน .env")
-    _pool = ConnectionPool(url, min_size=1, max_size=10, open=False, kwargs={"connect_timeout": 3})
+    _pool = ConnectionPool(url, min_size=1, max_size=10, open=False,
+                           kwargs={"connect_timeout": 3, "row_factory": dict_row})
     try:
         # pool ลองต่อซ้ำเองจนได้หรือครบ timeout
         _pool.open(wait=True, timeout=timeout)
@@ -54,3 +56,30 @@ def close_db() -> None:
 def connection():
     """ใช้แบบ `with db.connection() as conn:` ออกจาก with แล้ว commit ให้เอง ถ้า error จะ rollback"""
     return _pool.connection()
+
+
+def create_user(email: str, password_hash: str) -> Optional[dict]:
+    """คืน None ถ้าอีเมลนี้มีอยู่แล้ว"""
+    with connection() as conn:
+        return conn.execute(
+            "INSERT INTO users (email, password_hash) VALUES (%s, %s) "
+            "ON CONFLICT (email) DO NOTHING RETURNING user_id::text AS user_id, email",
+            (email, password_hash),
+        ).fetchone()
+
+
+def find_user_by_email(email: str) -> Optional[dict]:
+    """มี password_hash ติดมาด้วย ใช้ตอน login เท่านั้น ห้าม return ออกไปตรงๆ"""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT user_id::text AS user_id, email, password_hash FROM users WHERE email = %s",
+            (email,),
+        ).fetchone()
+
+
+def find_user(user_id: str) -> Optional[dict]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT user_id::text AS user_id, email FROM users WHERE user_id = %s",
+            (user_id,),
+        ).fetchone()

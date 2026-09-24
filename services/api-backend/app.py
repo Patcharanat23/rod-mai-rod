@@ -1,8 +1,8 @@
-"""api-backend (stub)
+"""api-backend
 
-การส่งต่อไป routing-engine / weather-disaster / assistant-agent ต่อไว้จริงแล้ว
-ที่ยังเป็น stub: ผู้ใช้และทริปเก็บในหน่วยความจำ (หายเมื่อ restart) และ token ปลอม
-ของจริงค่อยๆ แทนทีละส่วน: ต่อ Postgres, bcrypt, JWT
+ผู้ใช้เก็บใน Postgres, login ด้วย bcrypt + JWT
+ที่ยังเป็น stub: ทริปเก็บในหน่วยความจำ (หายเมื่อ restart)
+การส่งต่อไป routing-engine / weather-disaster / assistant-agent / safety-knowledge ต่อไว้จริงแล้ว
 ห้ามลบ endpoint ไหนออกก่อนมีของจริงมาแทน และรูปแบบข้อมูลต้องตรงกับ docs/CONTRACT.md หัวข้อ 6
 """
 import uuid
@@ -13,24 +13,29 @@ from typing import Optional
 from fastapi import FastAPI, Header
 from pydantic import BaseModel, Field
 
+import auth
 import db
 from envelope import ApiError, call, ok, setup
 from geo import in_thailand, to_iso
 
 
+DEMO_EMAIL = "demo@example.com"
+DEMO_PASSWORD = "demo1234"
+TRIPS: dict[str, dict] = {}
+MAX_WAYPOINTS = 5
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    # scripts/smoke.sh login ด้วยคู่นี้ ถ้ามีอยู่แล้ว create_user ไม่ทำอะไร
+    db.create_user(DEMO_EMAIL, auth.hash_password(DEMO_PASSWORD))
     yield
     db.close_db()
 
 
 app = FastAPI(title="api-backend", lifespan=lifespan)
 setup(app, "api-backend")
-
-DEMO_USER = {"user_id": "u-0001", "email": "demo@example.com"}
-TRIPS: dict[str, dict] = {}
-MAX_WAYPOINTS = 5
 
 # timeout (วินาที) ตาม CONTRACT หัวข้อ 3
 ROUTING_TIMEOUT = 45
@@ -70,10 +75,13 @@ class ChatIn(BaseModel):
 
 
 def current_user(authorization: Optional[str]) -> dict:
-    # stub: token อะไรก็ได้ที่ขึ้นต้นด้วย Bearer ถือเป็น demo user
     if not authorization or not authorization.startswith("Bearer "):
         raise ApiError("UNAUTHORIZED", "กรุณาเข้าสู่ระบบก่อน")
-    return DEMO_USER
+    user = db.find_user(auth.read_token(authorization.removeprefix("Bearer ")))
+    if user is None:
+        # token ถูกต้องแต่ผู้ใช้ไม่อยู่แล้ว เช่น หลัง make reset
+        raise ApiError("UNAUTHORIZED", "กรุณาเข้าสู่ระบบก่อน")
+    return user
 
 
 def check_places(places: list[Place]) -> None:
@@ -85,6 +93,13 @@ def check_places(places: list[Place]) -> None:
 def check_time(dt: datetime) -> None:
     if dt.tzinfo is None:
         raise ApiError("VALIDATION_ERROR", "departure_time ต้องมี timezone เช่น 2026-09-28T01:00:00Z")
+
+
+def normalize_email(email: str) -> str:
+    email = email.strip().lower()
+    if "@" not in email:
+        raise ApiError("VALIDATION_ERROR", "รูปแบบอีเมลไม่ถูกต้อง")
+    return email
 
 
 def get_owned_trip(trip_id: str, user: dict) -> dict:
@@ -105,12 +120,24 @@ def next_trip_no(user_id: str) -> int:
 
 @app.post("/api/v1/auth/register")
 def register(body: Credentials):
-    return ok({"user_id": DEMO_USER["user_id"], "email": body.email})
+    email = normalize_email(body.email)
+    # bcrypt อ่านแค่ 72 ไบต์แรก ภาษาไทยตัวละ 3 ไบต์
+    if len(body.password.encode()) > 72:
+        raise ApiError("VALIDATION_ERROR", "รหัสผ่านยาวเกินไป")
+    user = db.create_user(email, auth.hash_password(body.password))
+    if user is None:
+        raise ApiError("VALIDATION_ERROR", "อีเมลนี้ถูกใช้สมัครแล้ว")
+    return ok(user)
 
 
 @app.post("/api/v1/auth/login")
 def login(body: Credentials):
-    return ok({"token": "dev-token", "user": DEMO_USER})
+    user = db.find_user_by_email(normalize_email(body.email))
+    if user is None or not auth.check_password(body.password, user["password_hash"]):
+        raise ApiError("UNAUTHORIZED", "อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+    # เลือก field เอง ห้ามส่ง password_hash ออกไป
+    return ok({"token": auth.make_token(user["user_id"]),
+               "user": {"user_id": user["user_id"], "email": user["email"]}})
 
 
 @app.get("/api/v1/me")
