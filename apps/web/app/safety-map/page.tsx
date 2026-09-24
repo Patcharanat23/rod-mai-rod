@@ -107,7 +107,9 @@ function HazardPopup({ h }: { h: Hazard }) {
       <div className="row" style={{ gap: 6, margin: "4px 0" }}>
         <RiskBadge level={h.severity} />
         <span>
-          {hazardMeta(h.hazard_type).label} · {h.province}
+          {hazardMeta(h.hazard_type).label}
+          {/* GDACS / USGS ไม่มีชื่อจังหวัด */}
+          {h.province && ` · ${h.province}`}
         </span>
       </div>
       <span className="muted">
@@ -161,6 +163,7 @@ export default function SafetyMapPage() {
             lat: h.lat,
             lng: h.lng,
             color: riskColor(h.severity),
+            label: hazardMeta(h.hazard_type).symbol,
             popup: <HazardPopup h={h} />,
           }))}
         />
