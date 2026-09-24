@@ -78,3 +78,63 @@ def test_fake_token_is_unauthorized(client):
     res = client.get("/api/v1/me", headers={"Authorization": "Bearer dev-token"})
     assert res.status_code == 401
     assert res.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+# ---------- trips ----------
+
+def new_user_header(client) -> dict:
+    email = f"user-{uuid.uuid4()}@example.com"
+    client.post("/api/v1/auth/register", json={"email": email, "password": "secret123"})
+    res = client.post("/api/v1/auth/login", json={"email": email, "password": "secret123"})
+    return {"Authorization": f"Bearer {res.json()['data']['token']}"}
+
+
+def test_trip_shape_is_unchanged_and_stored(client, auth_header):
+    created = client.post("/api/v1/trips", headers=auth_header,
+                          json={**TRIP, "departure_time": "2030-01-01T08:00:00+07:00"}).json()["data"]
+    assert list(created) == ["trip_id", "trip_no", "user_id", "origin", "destination",
+                             "departure_time", "waypoints", "plan_status", "plan"]
+    assert created["departure_time"] == "2030-01-01T01:00:00Z"
+    assert created["plan_status"] == "NONE" and created["plan"] is None
+    got = client.get(f"/api/v1/trips/{created['trip_id']}", headers=auth_header).json()["data"]
+    assert got == created
+
+
+def test_other_user_gets_forbidden(client, auth_header):
+    trip_id = client.post("/api/v1/trips", headers=auth_header, json=TRIP).json()["data"]["trip_id"]
+    other = new_user_header(client)
+    url = f"/api/v1/trips/{trip_id}"
+    for res in (client.get(url, headers=other),
+                client.patch(url, headers=other, json={"departure_time": "2030-01-02T06:00:00Z"}),
+                client.delete(url, headers=other),
+                client.post(f"{url}/plan", headers=other)):
+        assert res.status_code == 403
+        assert res.json()["error"]["code"] == "FORBIDDEN"
+    # ทริปของเจ้าของต้องไม่ถูกแก้หรือลบ
+    mine = client.get(url, headers=auth_header).json()["data"]
+    assert mine["departure_time"] == TRIP["departure_time"]
+
+
+def test_unknown_trip_is_not_found(client, auth_header):
+    for trip_id in (str(uuid.uuid4()), "not-a-uuid"):
+        res = client.get(f"/api/v1/trips/{trip_id}", headers=auth_header)
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_trip_no_is_counted_per_user(client):
+    a, b = new_user_header(client), new_user_header(client)
+    nos_a = [client.post("/api/v1/trips", headers=a, json=TRIP).json()["data"]["trip_no"] for _ in range(2)]
+    no_b = client.post("/api/v1/trips", headers=b, json=TRIP).json()["data"]["trip_no"]
+    assert nos_a == [1, 2]
+    assert no_b == 1
+
+
+def test_patch_after_plan_is_stale(client, auth_header, monkeypatch):
+    # แทน routing-engine ด้วยคำตอบปลอม เทสต์นี้สนแค่ plan_status
+    monkeypatch.setattr("app.call", lambda *args, **kwargs: {"route_options": [], "warnings": []})
+    trip_id = client.post("/api/v1/trips", headers=auth_header, json=TRIP).json()["data"]["trip_id"]
+    client.post(f"/api/v1/trips/{trip_id}/plan", headers=auth_header)
+    assert client.get(f"/api/v1/trips/{trip_id}", headers=auth_header).json()["data"]["plan_status"] == "FRESH"
+    res = client.patch(f"/api/v1/trips/{trip_id}", headers=auth_header, json={"departure_time": "2030-01-02T06:00:00Z"})
+    assert res.json()["data"]["plan_status"] == "STALE"
