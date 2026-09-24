@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+import hazard_feeds
 import weather
 from envelope import ApiError, ok, setup
 from geo import to_iso
@@ -57,10 +58,7 @@ def area(lat: float, lng: float):
 
 @app.get("/api/v1/hazards")
 def hazards(min_lat: float, min_lng: float, max_lat: float, max_lng: float):
-    now = to_iso(datetime.now(timezone.utc))
-    sample = [
-        {"hazard_id": "gdacs-1", "hazard_type": "FLOOD", "severity": "HIGH", "lat": 15.7047, "lng": 100.1372,
-         "province": "นครสวรรค์", "title_th": "น้ำท่วมขังหลายพื้นที่", "source": "GDACS", "updated_at": now},
-    ]
-    found = [h for h in sample if min_lat <= h["lat"] <= max_lat and min_lng <= h["lng"] <= max_lng]
-    return ok({"hazards": found, "warnings": []})
+    if min_lat > max_lat or min_lng > max_lng:
+        raise ApiError("VALIDATION_ERROR", "กรอบพิกัดไม่ถูกต้อง ค่า min ต้องไม่มากกว่า max")
+    found, warnings = hazard_feeds.get_hazards((min_lat, min_lng, max_lat, max_lng))
+    return ok({"hazards": found, "warnings": warnings})
