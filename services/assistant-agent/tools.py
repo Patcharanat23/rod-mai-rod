@@ -1,6 +1,6 @@
 """tools ที่ LLM เรียกได้ ทุกตัวทำงานผ่าน backend() ด้วย token ของผู้ใช้
 
-LLM ส่งแค่ trip_no และเวลาแบบคน (เลื่อนกี่วัน / กี่โมงตามเวลาไทย) การคิดวันที่และแปลง UTC ทำในโค้ดนี้
+LLM ส่งแค่ trip_no และเวลาแบบคน (เลื่อนกี่วัน / กี่ชั่วโมง / กี่โมงตามเวลาไทย) การคิดวันที่และแปลง UTC ทำในโค้ดนี้
 ตัวเลขอากาศและระดับความเสี่ยงที่คืนให้ LLM มาจากระบบทั้งหมด
 """
 import re
@@ -27,6 +27,9 @@ SCHEMAS = [
             "trip_no": {"type": "integer", "description": "เลขทริป เช่น Trip 01 คือ 1"},
             "shift_days": {"type": "integer", "description": "เลื่อนจากวันเดิมกี่วัน เช่น วันถัดไป = 1 ไม่เลื่อนวัน = 0"},
             "time": {"type": "string", "description": "เวลาออกใหม่ตามเวลาไทย HH:MM เช่น 13:00 ไม่ส่ง = เวลาเดิม"},
+            "shift_hours": {"type": "integer",
+                            "description": "เลื่อนจากเวลาเดิมกี่ชั่วโมง เช่น ออกไป 3 ชม. = 3 เร็วขึ้น 2 ชม. = -2 "
+                                           "ไม่ต้องรู้เวลาเดิม ระบบคิดให้"},
         }, "required": ["trip_no"]},
     }},
     {"type": "function", "function": {
@@ -83,6 +86,9 @@ def update_trip_time(args: dict, backend: Backend, auth: str, now: Optional[date
     shift = int(args.get("shift_days") or 0)
     if not 0 <= shift <= MAX_SHIFT_DAYS:
         return {"error": f"เลื่อนได้ 0-{MAX_SHIFT_DAYS} วัน"}, []
+    shift_hours = int(args.get("shift_hours") or 0)
+    if abs(shift_hours) > MAX_SHIFT_DAYS * 24:
+        return {"error": f"เลื่อนได้ไม่เกิน {MAX_SHIFT_DAYS * 24} ชั่วโมง"}, []
     new = datetime.fromisoformat(trip["departure_time"].replace("Z", "+00:00")).astimezone(BANGKOK)
     new += timedelta(days=shift)
     if args.get("time"):
@@ -91,6 +97,7 @@ def update_trip_time(args: dict, backend: Backend, auth: str, now: Optional[date
             return {"error": "เวลาต้องเป็นรูปแบบ HH:MM"}, []
         # วันตามเวลาไทย แล้วค่อยแปลงเป็น UTC
         new = new.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+    new += timedelta(hours=shift_hours)
     if new.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M") == trip["departure_time"][:16]:
         return {"error": "เวลาใหม่ตรงกับเวลาเดิม ไม่ได้เปลี่ยนอะไร"}, []
     if new <= (now or datetime.now(timezone.utc)):
