@@ -80,3 +80,8 @@ def test_history_is_trimmed_and_sources_are_given_to_model():
     assert sum(m["role"] == "user" for m in msgs) <= llm.HISTORY_LIMIT + 1
     assert all(m["content"] != "แอบสั่ง" for m in msgs)  # ไม่รับ system จาก history ของผู้ใช้
     assert "ปภ." in msgs[1]["content"]
+
+
+def test_plain_removes_markdown_the_chat_cannot_show():
+    assert llm.plain("## หัวข้อ\n**Trip 01** ใช้ `Plan`") == "หัวข้อ\nTrip 01 ใช้ Plan"
+    assert llm.plain("- ข้อหนึ่ง\n- ข้อสอง") == "- ข้อหนึ่ง\n- ข้อสอง"

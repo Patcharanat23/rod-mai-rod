@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from envelope import ApiError
-from rules import BANGKOK, Backend, find_trip, label, thai_time, to_utc_iso
+from rules import BANGKOK, RISK_TH, Backend, find_trip, label, thai_time, to_utc_iso
 
 HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 MAX_SHIFT_DAYS = 14
@@ -53,8 +53,12 @@ def place_name(p: dict) -> str:
     return p.get("name") or f"{p['lat']:.3f}, {p['lng']:.3f}"
 
 
+PLAN_STATUS_TH = {"FRESH": "วางแผนแล้ว", "STALE": "แผนเก่า ต้องกด Plan ใหม่", "NONE": "ยังไม่ได้วางแผน"}
+
+
+# ส่งคำไทยให้ LLM ใช้ตอบ ไม่อย่างนั้นจะพิมพ์รหัสอย่าง LOW / FRESH ให้ผู้ใช้เห็น
 def plan_summary(plan: dict) -> dict:
-    return {"risk_level": plan.get("risk_level"), "recommendation": plan.get("recommendation"),
+    return {"risk_th": RISK_TH.get(plan.get("risk_level"), "ไม่ทราบ"), "recommendation": plan.get("recommendation"),
             "summary_th": plan.get("summary_th"), "warnings": plan.get("warnings", [])}
 
 
@@ -67,7 +71,8 @@ def list_trips(args: dict, backend: Backend, auth: str) -> tuple[dict, list]:
     return {"trips": [{
         "trip_no": t["trip_no"], "name": label(t["trip_no"]),
         "origin": place_name(t["origin"]), "destination": place_name(t["destination"]),
-        "departure_th": thai_time(t["departure_time"]), "plan_status": t.get("plan_status"),
+        "departure_th": thai_time(t["departure_time"]),
+        "plan_th": PLAN_STATUS_TH.get(t.get("plan_status"), "ไม่ทราบ"),
     } for t in trips]}, []
 
 
@@ -120,9 +125,10 @@ def get_trip_weather(args: dict, backend: Backend, auth: str) -> tuple[dict, lis
     if plan is None:
         return {"error": f"{label(trip['trip_no'])} ยังไม่ได้วางแผน เรียก plan_trip ก่อน"}, []
     return {
-        "name": label(trip["trip_no"]), "plan_status": trip.get("plan_status"), **plan_summary(plan),
+        "name": label(trip["trip_no"]), "plan_th": PLAN_STATUS_TH.get(trip.get("plan_status"), "ไม่ทราบ"),
+        **plan_summary(plan),
         "waypoints": [{"name": w.get("name"), "eta_th": thai_time(w["eta"]), "forecast": w.get("forecast"),
-                       "risk_level": w.get("risk_level")} for w in plan.get("waypoints", [])],
+                       "risk_th": RISK_TH.get(w.get("risk_level"), "ไม่ทราบ")} for w in plan.get("waypoints", [])],
     }, []
 
 

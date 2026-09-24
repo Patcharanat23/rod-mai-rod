@@ -14,8 +14,11 @@ PERIOD_HOUR = {"เช้า": 8, "บ่าย": 13, "เย็น": 17}  # REA
 TH_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
 RISK_TH = {"LOW": "ต่ำ", "MEDIUM": "ปานกลาง", "HIGH": "สูง", None: "ไม่ทราบ"}
 
-TRIP_NO = re.compile(r"(?:trip|ทริป)\s*0*(\d+)", re.IGNORECASE)
+TRIP_NO = re.compile(r"(?:trip|ทริป)\s*(?:ที่|no\.?|#)?\s*0*(\d+)", re.IGNORECASE)
 NEXT_DAY = re.compile(r"วันถัดไป|พรุ่งนี้|อีก\s*1\s*วัน|อีกวัน")
+# เลขอื่นนอกจากเลขทริป เช่น "อีก 2 วัน" "9 โมง" "13:30" กฎทำไม่ได้ ต้องให้ LLM ใช้ tools
+# ถ้ากฎรับไปจะเลื่อนผิดเวลาโดยไม่บอกผู้ใช้
+OTHER_NUMBER = re.compile(r"\d")
 PERIOD = re.compile(r"(?:ช่วง|ตอน)?(เช้า|บ่าย|เย็น)")
 MOVE = re.compile(r"เลื่อน|ย้าย|เปลี่ยนเวลา")
 WEATHER = re.compile(r"อากาศ|ฝน|พยากรณ์")
@@ -44,7 +47,8 @@ def parse(message: str) -> Optional[dict]:
     """แยกว่าเป็นคำสั่งแบบไหน คืน None ถ้าไม่เข้าแบบไหนเลย (ให้ LLM ตอบต่อ)"""
     m = TRIP_NO.search(message)
     trip_no = int(m.group(1)) if m else None
-    if MOVE.search(message):
+    rest = NEXT_DAY.sub(" ", TRIP_NO.sub(" ", message))
+    if MOVE.search(message) and not OTHER_NUMBER.search(rest):
         p = PERIOD.search(message)
         hour = PERIOD_HOUR[p.group(1)] if p else None
         if NEXT_DAY.search(message):

@@ -140,3 +140,23 @@ def test_backend_error_is_not_reported_as_success():
 @pytest.mark.parametrize("text", ["เชียงใหม่น่าเที่ยวไหม", "น้ำท่วมต้องทำยังไง", "อากาศวันนี้เป็นไง"])
 def test_other_messages_go_to_llm(text):
     assert rules.parse(text) is None
+
+
+@pytest.mark.parametrize("text", [
+    "ช่วยเลื่อนทริปที่ 1 ออกไปอีก 2 วัน ออกตอน 9 โมงเช้า",
+    "เลื่อน Trip 01 เป็นช่วงเช้า 7 โมง",
+    "เลื่อน Trip 01 ไป 13:30",
+])
+def test_specific_day_or_time_goes_to_llm_not_a_wrong_rule(text):
+    # กฎรู้แค่ "วันถัดไป" กับช่วงเช้า/บ่าย/เย็น ถ้ารับไปจะเลื่อนผิดเวลาโดยไม่บอกผู้ใช้
+    assert rules.parse(text) is None
+
+
+@pytest.mark.parametrize("text, kind, trip_no", [
+    ("เลื่อนทริปที่ 2 ไปวันถัดไป", "next_day", 2),
+    ("เลื่อน Trip 01 ไปอีก 1 วัน", "next_day", 1),
+    ("ทริปที่ 1 อากาศเป็นยังไง", "weather", 1),
+])
+def test_trip_number_written_the_thai_way(text, kind, trip_no):
+    cmd = rules.parse(text)
+    assert cmd["kind"] == kind and cmd["trip_no"] == trip_no

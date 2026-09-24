@@ -34,7 +34,7 @@ def test_update_time_uses_thai_date_then_replans():
     out, actions = run("update_trip_time", {"trip_no": 1, "time": "13:00"}, be)
     assert be.patched() == [{"departure_time": "2030-01-06T06:00:00Z"}]
     assert ("POST", "/api/v1/trips/id-1/plan", None) in be.calls
-    assert out["updated"] and out["plan"]["risk_level"] == "LOW"
+    assert out["updated"] and out["plan"]["risk_th"] == "ต่ำ"
     assert actions == [{"type": "TRIP_UPDATED", "trip_id": "id-1", "trip_no": 1}]
 
 
@@ -89,7 +89,7 @@ def test_weather_needs_a_plan_and_returns_system_numbers():
     plan = {"risk_level": "HIGH", "summary_th": "ฝนหนัก", "waypoints": [
         {"name": "นครสวรรค์", "eta": "2030-01-05T04:00:00Z", "forecast": forecast, "risk_level": "HIGH"}]}
     out, _ = run("get_trip_weather", {"trip_no": 1}, FakeBackend([full_trip(1, "2030-01-05T01:00:00Z", plan)]))
-    assert out["risk_level"] == "HIGH" and out["waypoints"][0]["forecast"] == forecast
+    assert out["risk_th"] == "สูง" and out["waypoints"][0]["forecast"] == forecast
     assert out["waypoints"][0]["eta_th"] == "5 ม.ค. 11:00 น."
 
 

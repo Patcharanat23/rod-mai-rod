@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import re
 import time
 from typing import Callable, Optional
 
@@ -9,7 +10,6 @@ from openai import OpenAI, OpenAIError
 
 import tools
 from envelope import _request_id
-from rules import RISK_TH
 
 log = logging.getLogger("assistant-agent")
 
@@ -23,14 +23,14 @@ RunTool = Callable[[str, Optional[dict]], tuple[dict, list]]
 
 SYSTEM_PROMPT = (
     "คุณคือผู้ช่วยวางแผนเที่ยวในประเทศไทยของเว็บ rod-mai-rod "
-    "ตอบสั้น กระชับ เป็นภาษาเดียวกับที่ผู้ใช้พิมพ์ (ส่วนใหญ่คือภาษาไทย) "
+    "ตอบสั้น กระชับ ไม่เกิน 5 บรรทัด เป็นภาษาเดียวกับที่ผู้ใช้พิมพ์ (ส่วนใหญ่คือภาษาไทย) ภาษาไทยลงท้ายด้วยครับ "
+    "หน้าแชทแสดงข้อความธรรมดา ห้ามใช้ markdown เช่น ** หรือ # ใช้ขีด - นำหน้าข้อได้ "
+    "บอกระดับความเสี่ยงเป็นคำไทย (ต่ำ ปานกลาง สูง) ห้ามพิมพ์รหัสภาษาอังกฤษของระบบ "
     "ห้ามแต่งข้อมูลสภาพอากาศ ความเสี่ยง หรือเบอร์โทรเอง ถ้าไม่มีข้อมูลให้บอกตรงๆ "
     "ระดับความเสี่ยงของทริปมาจากระบบเท่านั้น คุณไม่ได้เป็นคนตัดสิน "
     "ถ้าผู้ใช้สั่งดูหรือแก้ทริป ให้เรียก tools ที่มี ห้ามบอกว่าแก้แล้วถ้า tool ไม่ได้ตอบว่าสำเร็จ "
     "ถ้าไม่ชัดว่าหมายถึงทริปไหน ให้ถามกลับหรือเรียก list_trips ห้ามเดา "
-    "บอกระดับความเสี่ยงและตัวเลขอากาศตามที่ tool ตอบเท่านั้น "
-    "ถ้าผู้ใช้อยากเลื่อนทริป แนะนำให้พิมพ์แบบนี้: \"เลื่อน Trip 01 ไปวันถัดไป\", "
-    "\"เลื่อน Trip 01 เป็นช่วงบ่าย\", \"Trip 01 อากาศเป็นยังไง\""
+    "บอกระดับความเสี่ยงและตัวเลขอากาศตามที่ tool ตอบเท่านั้น"
 )
 
 FALLBACK_REPLY = (
@@ -78,6 +78,12 @@ def build_messages(message: str, history: list[dict], sources: list[dict]) -> li
     return msgs
 
 
+def plain(text: str) -> str:
+    """หน้าแชทแสดงข้อความธรรมดา โมเดลบางตัวยังใส่ markdown มาแม้สั่งห้าม ตัดทิ้งก่อนส่ง"""
+    text = re.sub(r"\*\*|__|`", "", text)
+    return re.sub(r"^\s*#+\s*", "", text, flags=re.MULTILINE).strip()
+
+
 def tool_call_message(msg) -> dict:
     return {"role": "assistant", "content": msg.content or "", "tool_calls": [
         {"id": c.id, "type": "function", "function": {"name": c.function.name, "arguments": c.function.arguments}}
@@ -94,7 +100,7 @@ def done_reply(results: list[dict]) -> str:
             lines.append(f"วางแผน {r['name']} ใหม่แล้ว")
         plan = r.get("plan") or (r if r.get("planned") else None)
         if plan:
-            lines.append(f"ความเสี่ยงระดับ{RISK_TH.get(plan.get('risk_level'), 'ไม่ทราบ')} {plan.get('summary_th') or ''}".strip())
+            lines.append(f"ความเสี่ยงระดับ{plan.get('risk_th', 'ไม่ทราบ')} {plan.get('summary_th') or ''}".strip())
         if r.get("plan_error"):
             lines.append("แต่คำนวณเส้นทางใหม่ไม่สำเร็จ กด Plan ในหน้า My Trip อีกครั้งนะครับ")
     return "\n".join(lines)
@@ -135,7 +141,7 @@ def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[
                                                      timeout=min(LLM_TIMEOUT, remaining), **extra)
                 msg = res.choices[0].message
                 if not getattr(msg, "tool_calls", None):
-                    text = (msg.content or "").strip()
+                    text = plain(msg.content or "")
                     if text:
                         return text, unique(actions), changed
                     break
