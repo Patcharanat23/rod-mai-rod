@@ -13,6 +13,7 @@ a { color: #2563eb; text-decoration: none; }
 
 .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
 .card + .card { margin-top: 12px; }
+.grid > .card + .card { margin-top: 0; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .muted { color: #6b7280; font-size: 14px; }
 
