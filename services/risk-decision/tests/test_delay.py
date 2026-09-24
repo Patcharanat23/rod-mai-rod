@@ -92,6 +92,52 @@ def test_delay_does_not_trust_a_missing_forecast_as_safe(monkeypatch):
     assert "6 ชม." in data["summary_th"]  # ต้องข้าม 3 ชม. (ข้อมูลไม่ครบ) ไปเลือก 6 ชม. ที่ยืนยันได้จริง
 
 
+def test_avoid_when_both_delay_offsets_have_no_forecast_for_the_risky_point(monkeypatch):
+    """เช็คตามที่รีวิว PR #40 ข้อ 1 ระบุไว้เป๊ะๆ: จุดเสี่ยงไม่มีพยากรณ์ทั้ง +3 และ +6 ชม.
+    ต้องได้ AVOID ไม่ใช่ DELAY (ไม่มีช่วงเวลาไหนยืนยันได้เลยว่าดีขึ้นจริง)"""
+    def fake_call(url_env, method, path, *, timeout, json=None, params=None, headers=None):
+        if path == "/api/v1/forecast/points":
+            forecasts = []
+            for p in json["points"]:
+                if p["time"] == T_TROUBLE:
+                    forecasts.append({"rain_mm_per_h": 40, "wind_kmh": 10})
+                elif p["time"] in ("2026-09-24T05:00:00Z", "2026-09-24T08:00:00Z"):  # จุดเสี่ยง +3 และ +6 ชม.
+                    forecasts.append(None)
+                else:
+                    forecasts.append({"rain_mm_per_h": 2, "wind_kmh": 10})
+            return {"points": [{"forecast": f} for f in forecasts], "warnings": []}
+        if path == "/api/v1/hazards":
+            return {"hazards": []}
+        raise AssertionError(f"unexpected call: {path}")
+
+    monkeypatch.setattr(appmod, "call", fake_call)
+    client = TestClient(appmod.app)
+    res = client.post("/api/v1/risk/evaluate", json=_single_route_body())
+    data = res.json()["data"]
+
+    assert data["recommendation"] == "AVOID"
+
+
+def test_real_point_missing_forecast_still_warns(monkeypatch):
+    """เช็คควบคู่กับข้อ 2: ไม่ได้ปิด WEATHER_UNAVAILABLE ไปทั้งหมด ถ้าจุดจริง (ไม่ใช่จุดเลื่อนเวลา)
+    ไม่มีพยากรณ์จริงๆ ต้องยังเห็น warning นี้เหมือนเดิม"""
+    def fake_call(url_env, method, path, *, timeout, json=None, params=None, headers=None):
+        if path == "/api/v1/forecast/points":
+            forecasts = [None if p["time"] == T_TROUBLE else {"rain_mm_per_h": 2, "wind_kmh": 10}
+                         for p in json["points"]]  # จุดจริงกลางทางไม่มีพยากรณ์
+            return {"points": [{"forecast": f} for f in forecasts], "warnings": []}
+        if path == "/api/v1/hazards":
+            return {"hazards": []}
+        raise AssertionError(f"unexpected call: {path}")
+
+    monkeypatch.setattr(appmod, "call", fake_call)
+    client = TestClient(appmod.app)
+    res = client.post("/api/v1/risk/evaluate", json=_single_route_body())
+    data = res.json()["data"]
+
+    assert "WEATHER_UNAVAILABLE" in data["warnings"]
+
+
 def test_delayed_points_do_not_leak_weather_unavailable_onto_real_route(monkeypatch):
     """แก้รีวิว PR #40 ข้อ 2: weather-disaster ตอบ warnings รวมมาทั้งคำขอ (มีจุดเลื่อนเวลาปนอยู่)
     แต่จุดจริงของเส้นทางมีพยากรณ์ครบทุกจุด ไม่ควรเห็น WEATHER_UNAVAILABLE ในผลลัพธ์เลย"""
