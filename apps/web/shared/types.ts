@@ -84,6 +84,9 @@ export type AreaWeather = {
   warnings: Warning[];
 };
 
+// ผลค้นสถานที่จาก GET /places/search
+export type PlaceResult = LatLng & { name: string; detail: string | null };
+
 export type HazardType = "RAIN" | "HEAVY_RAIN" | "STRONG_WIND" | "FLOOD" | "LANDSLIDE_RISK" | "STORM" | "EARTHQUAKE";
 
 export type Hazard = LatLng & {
