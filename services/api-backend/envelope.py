@@ -67,7 +67,7 @@ def _fail(code: str, message: str) -> JSONResponse:
     )
 
 
-def setup(app: FastAPI, service_name: str) -> None:
+def setup(app: FastAPI, service_name: str, health_check=None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logger = logging.getLogger(service_name)
 
@@ -107,6 +107,12 @@ def setup(app: FastAPI, service_name: str) -> None:
 
     @app.get("/health")
     def health():
+        if health_check is not None:
+            try:
+                health_check()
+            except Exception as exc:
+                logger.warning("health check failed: %s", exc)
+                return JSONResponse(status_code=503, content={"status": "error", "service": service_name})
         return {"status": "ok", "service": service_name}
 
 

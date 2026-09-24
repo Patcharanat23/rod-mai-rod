@@ -39,7 +39,8 @@ def init_db(timeout: float = 10) -> None:
     url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("ยังไม่ได้ตั้งค่า DATABASE_URL ใน .env")
-    _pool = ConnectionPool(url, min_size=1, max_size=10, open=False,
+    # timeout=5: ฐานข้อมูลล่มระหว่างทำงาน request จะได้ error ใน 5 วิ ไม่ค้าง 30 วิ
+    _pool = ConnectionPool(url, min_size=1, max_size=10, open=False, timeout=5,
                            kwargs={"connect_timeout": 3, "row_factory": dict_row})
     try:
         # pool ลองต่อซ้ำเองจนได้หรือครบ timeout
@@ -59,6 +60,12 @@ def close_db() -> None:
 def connection():
     """ใช้แบบ `with db.connection() as conn:` ออกจาก with แล้ว commit ให้เอง ถ้า error จะ rollback"""
     return _pool.connection()
+
+
+def ping() -> None:
+    """raise ถ้าฐานข้อมูลใช้ไม่ได้ /health ใช้ ต้องตอบทันก่อน healthcheck ของ Docker (5 วิ)"""
+    with _pool.connection(timeout=2) as conn:
+        conn.execute("SELECT 1")
 
 
 def create_user(email: str, password_hash: str) -> Optional[dict]:
@@ -87,7 +94,7 @@ def find_user(user_id: str) -> Optional[dict]:
             (user_id,),
         ).fetchone()
 
-    
+
 # ---------- trips ----------
 
 # ลำดับคอลัมน์ = ลำดับ key ใน response ต้องเหมือนตอนเป็น stub

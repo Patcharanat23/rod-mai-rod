@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="api-backend", lifespan=lifespan)
-setup(app, "api-backend")
+setup(app, "api-backend", health_check=db.ping)
 
 # timeout (วินาที) ตาม CONTRACT หัวข้อ 3
 ROUTING_TIMEOUT = 45
