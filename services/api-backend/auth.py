@@ -12,7 +12,8 @@ _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 def _expires_in() -> timedelta:
     """อ่าน JWT_EXPIRES_IN แบบ 7d, 12h, 30m, 90s หรือตัวเลขเปล่าเป็นวินาที"""
-    raw = os.getenv("JWT_EXPIRES_IN", "7d").strip()
+    # ค่าว่างใน .env (JWT_EXPIRES_IN=) ให้ใช้ค่าตั้งต้น ไม่งั้น raw[-1] พัง
+    raw = (os.getenv("JWT_EXPIRES_IN") or "").strip() or "7d"
     if raw[-1] in _UNITS:
         return timedelta(seconds=int(raw[:-1]) * _UNITS[raw[-1]])
     return timedelta(seconds=int(raw))

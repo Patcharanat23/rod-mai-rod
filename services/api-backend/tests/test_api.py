@@ -1,7 +1,12 @@
+import os
 import uuid
+from datetime import datetime, timedelta, timezone
 
+import jwt
+import psycopg
 from fastapi.testclient import TestClient
 
+import auth
 from app import app
 
 # ไม่รัน lifespan ใช้กับเทสต์ที่ไม่ต้องแตะฐานข้อมูล
@@ -138,3 +143,39 @@ def test_patch_after_plan_is_stale(client, auth_header, monkeypatch):
     assert client.get(f"/api/v1/trips/{trip_id}", headers=auth_header).json()["data"]["plan_status"] == "FRESH"
     res = client.patch(f"/api/v1/trips/{trip_id}", headers=auth_header, json={"departure_time": "2030-01-02T06:00:00Z"})
     assert res.json()["data"]["plan_status"] == "STALE"
+
+
+# ---------- health / token ----------
+
+class DeadPool:
+    def connection(self, timeout=None):
+        raise psycopg.OperationalError("database is down")
+
+
+def test_health_ok_when_db_is_up(client):
+    res = client.get("/health")
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok", "service": "api-backend"}
+
+
+def test_health_is_503_when_db_is_down(monkeypatch):
+    monkeypatch.setattr("db._pool", DeadPool())
+    res = bare.get("/health")
+    assert res.status_code == 503
+    assert res.json()["status"] == "error"
+
+
+def test_empty_jwt_expires_in_falls_back_to_7_days(monkeypatch):
+    for value in ("", "  "):
+        monkeypatch.setenv("JWT_EXPIRES_IN", value)
+        assert auth._expires_in() == timedelta(days=7)
+
+
+def test_expired_token_is_unauthorized(client):
+    login = client.post("/api/v1/auth/login", json={"email": "demo@example.com", "password": "demo1234"})
+    user_id = login.json()["data"]["user"]["user_id"]
+    past = datetime.now(timezone.utc) - timedelta(minutes=1)
+    token = jwt.encode({"sub": user_id, "exp": past}, os.environ["JWT_SECRET"], algorithm="HS256")
+    res = client.get("/api/v1/me", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "UNAUTHORIZED"
