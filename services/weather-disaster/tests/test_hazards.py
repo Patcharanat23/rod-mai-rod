@@ -3,9 +3,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hazard_feeds
+import landslide
 from app import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def no_landslide(monkeypatch):
+    """Landslide estimates have their own tests; keep these about GDACS and USGS."""
+    monkeypatch.setattr(landslide, "landslide_hazards", lambda box: [])
+
+
 THAILAND = {"min_lat": 5.6, "min_lng": 97.3, "max_lat": 20.5, "max_lng": 105.7}
 
 

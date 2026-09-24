@@ -224,6 +224,16 @@ def _live_blocks(keys: list) -> tuple[dict, list[str]]:
     return blocks, []
 
 
+def hourly_blocks(coords: list[tuple[float, float]]) -> tuple[list[dict | None], list[str]]:
+    """Whole hourly series per coordinate, same order, from fixtures or cache or Open-Meteo."""
+    if not coords:
+        return [], []
+    keys = [cache_key(lat, lng) for lat, lng in coords]
+    unique = list(dict.fromkeys(keys))
+    blocks, warnings = _demo_blocks(unique) if demo_mode() else _live_blocks(unique)
+    return [blocks.get(k) for k in keys], warnings
+
+
 def forecast_points(points: list[tuple[float, float, datetime]]) -> tuple[list[dict | None], list[str]]:
     """Same order and same count as the input. Unknown data is None plus a warning."""
     if not points:

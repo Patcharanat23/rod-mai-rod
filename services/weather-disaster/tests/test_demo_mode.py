@@ -5,11 +5,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hazard_feeds
+import landslide
 import record_fixtures
 import weather
 from app import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def no_landslide(monkeypatch):
+    """Landslide estimates have their own tests; keep these about GDACS and USGS."""
+    monkeypatch.setattr(landslide, "landslide_hazards", lambda box: [])
+
+
 RECORDED_DAY = datetime(2026, 1, 10)  # far from today, so the shift is exercised
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 
 from geo import THAILAND_BOUNDS, to_iso
+import landslide
 from weather import demo_mode
 
 logger = logging.getLogger("weather-disaster")
@@ -160,13 +161,16 @@ def demo_usgs(box: Box) -> list[dict]:
     return parse_all(read_fixture("usgs.json").get("features"), box, parse_usgs)
 
 
-SOURCES = (fetch_gdacs, fetch_usgs)
-DEMO_SOURCES = (demo_gdacs, demo_usgs)
+def derived_landslide(box: Box) -> list[dict]:
+    return landslide.landslide_hazards(box)
 
 
 def get_hazards(box: Box) -> tuple[list[dict], list[str]]:
     """All sources in parallel. A failed source becomes a warning, the rest still return."""
-    sources = DEMO_SOURCES if demo_mode() else SOURCES
+    if demo_mode():
+        sources = (demo_gdacs, demo_usgs, derived_landslide)
+    else:
+        sources = (fetch_gdacs, fetch_usgs, derived_landslide)
     hazards: list[dict] = []
     warnings: list[str] = []
     with ThreadPoolExecutor(max_workers=len(sources)) as pool:
