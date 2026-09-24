@@ -32,10 +32,6 @@ class PointsIn(BaseModel):
     points: list[TimedPoint]
 
 
-def sample_forecast(time_iso: str) -> dict:
-    return {"time": time_iso, "rain_mm_per_h": 0.2, "wind_kmh": 9, "temp_c": 29, "condition_th": "มีเมฆบางส่วน"}
-
-
 @app.post("/api/v1/forecast/points")
 def forecast_points(body: PointsIn):
     for p in body.points:
@@ -48,12 +44,11 @@ def forecast_points(body: PointsIn):
 
 @app.get("/api/v1/area")
 def area(lat: float, lng: float):
-    now = to_iso(datetime.now(timezone.utc))
-    cells = [
-        {"lat": round(lat + dy * 0.22, 4), "lng": round(lng + dx * 0.22, 4), "forecast": sample_forecast(now)}
-        for dy in (-1, 0, 1) for dx in (-1, 0, 1)
-    ]
-    return ok({"center": {"lat": lat, "lng": lng}, "cells": cells, "updated_at": now, "warnings": []})
+    now = datetime.now(timezone.utc)
+    grid = weather.area_grid(lat, lng)
+    forecasts, warnings = weather.forecast_points([(g_lat, g_lng, now) for g_lat, g_lng in grid])
+    cells = [{"lat": g_lat, "lng": g_lng, "forecast": fc} for (g_lat, g_lng), fc in zip(grid, forecasts)]
+    return ok({"center": {"lat": lat, "lng": lng}, "cells": cells, "updated_at": to_iso(now), "warnings": warnings})
 
 
 @app.get("/api/v1/hazards")
