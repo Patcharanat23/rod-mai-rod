@@ -2,7 +2,7 @@
 
 // โมดูล 3 อ่าน app/assistant/README.md ก่อน จุดที่ต้องเติมมี TODO(web-safety-assistant)
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Warnings from "@/shared/Warnings";
 import { api, ApiError } from "@/shared/api";
 import type { ChatAction, ChatMessage, ChatReply } from "@/shared/types";
@@ -25,6 +25,11 @@ const ACTION_TEXT: Record<ChatAction["type"], string> = {
   TRIP_UPDATED: "ถูกแก้แล้ว",
   TRIP_DELETED: "ถูกลบแล้ว",
 };
+
+const BUBBLE_STYLE = {
+  user: { alignSelf: "flex-end", background: "#2563eb", color: "#fff" },
+  assistant: { alignSelf: "flex-start", background: "#f3f4f6", color: "#1f2937" },
+} as const;
 
 // actions เก็บไว้แสดงการ์ดเท่านั้น ไม่ส่งกลับไปใน history
 type Message = ChatMessage & { actions?: ChatAction[] };
@@ -63,6 +68,13 @@ export default function AssistantPage() {
   const [lastReply, setLastReply] = useState<ChatReply | null>(null);
   // กันกด Enter รัวๆ ก่อน state busy อัปเดตทัน
   const sending = useRef(false);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // เลื่อนลงล่างสุดเมื่อมีข้อความใหม่หรือเริ่มรอคำตอบ
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, busy]);
 
   async function send(text: string) {
     if (!text.trim() || sending.current) return;
@@ -102,16 +114,30 @@ export default function AssistantPage() {
           </div>
         </div>
       )}
-      <div style={{ minHeight: 300 }}>
+      <div
+        ref={listRef}
+        style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 300, maxHeight: 480, overflowY: "auto", marginBottom: 12 }}
+      >
         {messages.length === 0 && !busy && <p className="muted">ลองกดคำถามตัวอย่างด้านล่าง หรือพิมพ์คำถามเอง</p>}
         {messages.map((m, i) => (
-          <div key={i}>
+          <div key={i} style={{ display: "flex", flexDirection: "column" }}>
             {/* แสดงเป็นข้อความธรรมดา ห้ามใช้ dangerouslySetInnerHTML (README ข้อ 4) */}
-            <p style={{ textAlign: m.role === "user" ? "right" : "left", whiteSpace: "pre-wrap" }}>{m.content}</p>
+            <div
+              style={{
+                ...BUBBLE_STYLE[m.role],
+                maxWidth: "80%",
+                padding: "8px 12px",
+                borderRadius: 12,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {m.content}
+            </div>
             {m.actions && <ActionCards actions={m.actions} />}
           </div>
         ))}
-        {busy && <p className="muted">กำลังพิมพ์...</p>}
+        {busy && <p className="muted" style={{ margin: 0 }}>กำลังพิมพ์...</p>}
       </div>
       <div className="row" style={{ marginBottom: 8 }}>
         {SAMPLE_PROMPTS.map((p) => (
