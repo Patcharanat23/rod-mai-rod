@@ -143,7 +143,11 @@ function WaypointList({ waypoints }: { waypoints: PlanWaypoint[] }) {
             <RiskBadge level={w.risk_level} />
           </div>
           <span>ถึง {formatThaiTime(w.eta)}</span>
-          <span>อากาศ {w.forecast?.condition_th ?? "ไม่มีข้อมูล"}</span>
+          <span>
+            {w.forecast
+              ? `อากาศ ${w.forecast.condition_th} · ฝน ${w.forecast.rain_mm_per_h} มม./ชม. · ลม ${w.forecast.wind_kmh} กม./ชม.`
+              : "ยังไม่มีข้อมูลอากาศ"}
+          </span>
         </li>
       ))}
     </ol>
