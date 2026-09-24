@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import type { LatLng } from "./types";
 
-const BANGKOK: LatLng = { lat: 13.7563, lng: 100.5018 };
+export const BANGKOK: LatLng = { lat: 13.7563, lng: 100.5018 };
+const THAILAND = { minLat: 5.6, minLng: 97.3, maxLat: 20.5, maxLng: 105.7 }; // กรอบเดียวกับ geo.py ของ service
+
+export function inThailand(p: LatLng): boolean {
+  return p.lat >= THAILAND.minLat && p.lat <= THAILAND.maxLat && p.lng >= THAILAND.minLng && p.lng <= THAILAND.maxLng;
+}
 
 // ตำแหน่งผู้ใช้ ถ้าไม่อนุญาต/เปิดผ่าน http ที่ไม่ใช่ localhost/รอเกิน 5 วินาที ใช้กรุงเทพแทน ห้ามค้าง
 export function useLocation() {

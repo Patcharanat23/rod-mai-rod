@@ -5,18 +5,22 @@ import StatusBox from "./StatusBox";
 import Warnings from "./Warnings";
 import { formatThaiTime } from "./time";
 import { useApi } from "./useApi";
-import { useLocation } from "./useLocation";
+import { BANGKOK, inThailand, useLocation } from "./useLocation";
 import type { AreaWeather as Area } from "./types";
 
 // แผนที่ + สภาพอากาศแบบ area รอบตำแหน่งผู้ใช้ ใช้ตอนผู้ใช้ยังไม่มีทริป (Overview และ My Trip)
 export default function AreaWeather() {
-  const { pos, denied } = useLocation();
+  const { pos: located, denied } = useLocation();
+  // ระบบรองรับเฉพาะในไทย (CONTRACT OUT_OF_THAILAND) ผู้ใช้อยู่ต่างประเทศแสดงกรุงเทพแทน
+  const abroad = located !== null && !inThailand(located);
+  const pos = abroad ? BANGKOK : located;
   const { data, error, loading, reload } = useApi<Area>(pos ? `/weather/area?lat=${pos.lat}&lng=${pos.lng}` : null);
 
   return (
     <div className="card">
       <h3>สภาพอากาศบริเวณใกล้เคียง</h3>
       {denied && <p className="muted">ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง แสดงกรุงเทพฯ แทน</p>}
+      {abroad && <p className="muted">ตำแหน่งของคุณอยู่นอกประเทศไทย แสดงกรุงเทพฯ แทน</p>}
       {data && <Warnings warnings={data.warnings} />}
       {!pos || loading || error ? (
         <StatusBox loading={!pos || loading} error={error} onRetry={reload} />
