@@ -35,7 +35,7 @@ login ด้วยอีเมลอะไรก็ได้ รหัสผ่�
 | `useApi.ts` | `useApi<T>(path)` ดึงข้อมูลตอนเปิดหน้า ได้ `data, error, loading, reload` |
 | `StatusBox.tsx` | สถานะ กำลังโหลด / พังพร้อมปุ่มลองใหม่ / ไม่มีข้อมูล |
 | `Warnings.tsx` | แถบแจ้งเตือนจาก `warnings` เป็นภาษาไทย |
-| `Map.tsx` | แผนที่ Leaflet (ปิด SSR ให้แล้ว) props: `center, zoom, routes, markers, fitTo, onBoundsChange, onMapClick` |
+| `Map.tsx` | แผนที่ Leaflet (ปิด SSR ให้แล้ว) props: `center, zoom, routes, markers, fitTo, onBoundsChange, onMapClick` หมุดใส่ `label` เพื่อแสดงตัวอักษรบนหมุดได้ |
 | `RiskBadge.tsx`, `risk.ts` | สีและป้ายระดับความเสี่ยง `null` แสดงเป็น "ไม่ทราบ" |
 | `time.ts` | `formatThaiTime`, `formatDuration`, `thaiInputToUtc` (ค่าจาก datetime-local เป็น UTC), `utcToThaiInput` |
 | `useLocation.ts` | ตำแหน่งผู้ใช้ ไม่อนุญาตหรือรอเกิน 5 วิ ใช้กรุงเทพ |
