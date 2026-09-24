@@ -1,12 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app import CONTACTS, EMERGENCY, HAZARD_TYPES, app, load_docs
+from app import CONTACTS, HAZARD_TYPES, app, load_docs
 
 client = TestClient(app)
 
-
-# --- Existing Tests (ห้ามลบ) ---
 
 def test_every_doc_has_title_source_and_known_hazards():
     for doc in load_docs():
@@ -37,8 +35,6 @@ def test_unknown_hazard_type_is_rejected():
     assert res.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
-# --- Additional Tests (Task 9.1 & 9.2) ---
-
 def test_emergency_covers_all_7_hazard_types():
     for hazard in HAZARD_TYPES:
         res = client.get("/api/v1/safety/emergency", params={"hazard_type": hazard})
@@ -61,3 +57,10 @@ def test_search_thai_unspaced_queries(query, expected_doc_id):
     results = res.json()["data"]["results"]
     assert len(results) > 0, f"Query '{query}' returned no results"
     assert results[0]["doc_id"] == expected_doc_id, f"Expected {expected_doc_id} for query '{query}'"
+
+
+@pytest.mark.parametrize("unrelated_query", ["สวัสดีครับ", "ร้านกาแฟอร่อยแถวนี้"])
+def test_unrelated_queries_return_empty_results(unrelated_query):
+    res = client.post("/api/v1/safety/search", json={"query": unrelated_query})
+    assert res.status_code == 200
+    assert res.json()["data"]["results"] == []

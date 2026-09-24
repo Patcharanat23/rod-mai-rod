@@ -143,14 +143,22 @@ def score(query: str, line: str) -> float:
 def search(body: SearchIn):
     if not body.query.strip():
         raise ApiError("VALIDATION_ERROR", "ข้อความค้นหาว่าง")
+    
     wanted = set(body.hazard_types)
+    query_grams = get_trigrams(body.query)
+    
+    # คำนวณ Threshold: ต้องตรงอย่างน้อย 3 trigrams หรืออย่างน้อยครึ่งหนึ่งของ query trigrams
+    min_match_threshold = min(3, len(query_grams) // 2) if len(query_grams) >= 2 else 1
+
     hits = []
     for doc in DOCS:
         if wanted and not wanted & set(doc["hazard_types"]):
             continue
         for line in doc["lines"]:
             s = score(body.query, line)
-            if s > 0:
+            
+            # กรองคำที่ไม่เกี่ยวข้องออกด้วย min_match_threshold
+            if s >= min_match_threshold and s > 0:
                 score_weight = s + (1 if wanted else 0)
                 hits.append((
                     score_weight,
