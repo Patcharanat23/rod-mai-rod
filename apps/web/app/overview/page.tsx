@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import AreaWeather from "@/shared/AreaWeather";
+import EmergencyCard from "@/shared/EmergencyCard";
 import Map from "@/shared/Map";
 import RiskBadge from "@/shared/RiskBadge";
 import StatusBox from "@/shared/StatusBox";
@@ -9,7 +10,7 @@ import Warnings from "@/shared/Warnings";
 import { riskColor } from "@/shared/risk";
 import { formatDuration, formatThaiTime } from "@/shared/time";
 import { useApi } from "@/shared/useApi";
-import type { RiskLevel, Trip } from "@/shared/types";
+import type { HazardType, RiskLevel, Trip, TripPlan } from "@/shared/types";
 
 export default function OverviewPage() {
   const { data: trip, error, loading, reload } = useApi<Trip | null>("/trips/upcoming");
@@ -30,6 +31,15 @@ export default function OverviewPage() {
       )}
     </>
   );
+}
+
+// ภัยหลักของแผนที่เป็น HIGH ดูจากพยากรณ์ของจุดที่แย่ที่สุด ใช้เลือกคำแนะนำฉุกเฉิน
+function mainHazard(plan: TripPlan): HazardType | null {
+  if (plan.risk_level !== "HIGH") return null;
+  const f = plan.waypoints.map((w) => w.forecast).filter((x) => x !== null);
+  if (f.some((x) => x.rain_mm_per_h > 35)) return "HEAVY_RAIN";
+  if (f.some((x) => x.wind_kmh > 61)) return "STRONG_WIND";
+  return null;
 }
 
 function UpcomingTrip({ trip }: { trip: Trip }) {
@@ -69,6 +79,7 @@ function UpcomingTrip({ trip }: { trip: Trip }) {
               ใช้เวลาประมาณ {formatDuration(plan.duration_min)} <RiskBadge level={plan.risk_level} score={plan.risk_score} />
             </p>
             <p>{plan.summary_th}</p>
+            {mainHazard(plan) && <EmergencyCard hazardType={mainHazard(plan)!} />}
             <ol>
               {plan.waypoints.map((w) => (
                 <li key={w.waypoint_id}>
