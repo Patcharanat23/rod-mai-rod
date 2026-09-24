@@ -6,7 +6,7 @@
 
 1. [`docs/SPEC.md`](docs/SPEC.md) ระบบต้องทำอะไรได้บ้าง
 2. [`docs/CONTRACT.md`](docs/CONTRACT.md) กฎกลาง พอร์ต รูปแบบข้อมูล endpoint และ git flow **สำคัญที่สุด**
-3. [`docs/MODULES.md`](docs/MODULES.md) ใครทำโมดูลไหน และใครรอใคร และ [`docs/PLAN.md`](docs/PLAN.md) แผน 5 วัน
+3. [`docs/MODULES.md`](docs/MODULES.md) ใครทำโมดูลไหน และใครรอใคร และ [`docs/PLAN.md`](docs/PLAN.md) คิวงานของแต่ละคน
 4. README ในโฟลเดอร์โมดูลของตัวเอง มีรายการจุดที่คนมักพลาดเขียนดักไว้แล้ว
 5. [`docs/RUNBOOK.md`](docs/RUNBOOK.md) ถ้าอะไรพังให้เปิดไฟล์นี้
 
