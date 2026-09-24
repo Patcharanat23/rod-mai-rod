@@ -1,11 +1,14 @@
 """Disaster pins from GDACS (floods, storms) and USGS (earthquakes)."""
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 
 from geo import THAILAND_BOUNDS, to_iso
+from weather import demo_mode
 
 logger = logging.getLogger("weather-disaster")
 
@@ -16,6 +19,7 @@ TIMEOUT_S = 8
 EQ_MIN_MAG = 4.0
 EQ_MARGIN_DEG = 2.0  # quakes just across the border are still felt in Thailand
 EQ_DAYS = 7
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 GDACS_TYPES = {"FL": ("FLOOD", "น้ำท่วม"), "TC": ("STORM", "พายุหมุนเขตร้อน")}
 GDACS_SEVERITY = {"Green": "LOW", "Orange": "MEDIUM", "Red": "HIGH"}
@@ -124,10 +128,10 @@ def fetch_gdacs(box: Box) -> list[dict]:
     return parse_all(res.json().get("features"), box, parse_gdacs)
 
 
-def fetch_usgs(box: Box) -> list[dict]:
+def usgs_params() -> dict:
     area = widen(THAILAND_BOUNDS, EQ_MARGIN_DEG)
     start = datetime.now(timezone.utc) - timedelta(days=EQ_DAYS)
-    params = {
+    return {
         "format": "geojson",
         "minmagnitude": EQ_MIN_MAG,
         "minlatitude": area[0],
@@ -136,20 +140,37 @@ def fetch_usgs(box: Box) -> list[dict]:
         "maxlongitude": area[3],
         "starttime": start.strftime("%Y-%m-%dT%H:%M:%S"),
     }
-    res = httpx.get(USGS_URL, params=params, timeout=TIMEOUT_S)
+
+
+def fetch_usgs(box: Box) -> list[dict]:
+    res = httpx.get(USGS_URL, params=usgs_params(), timeout=TIMEOUT_S)
     res.raise_for_status()
     return parse_all(res.json().get("features"), box, parse_usgs)
 
 
+def read_fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def demo_gdacs(box: Box) -> list[dict]:
+    return parse_all(read_fixture("gdacs.json").get("features"), box, parse_gdacs)
+
+
+def demo_usgs(box: Box) -> list[dict]:
+    return parse_all(read_fixture("usgs.json").get("features"), box, parse_usgs)
+
+
 SOURCES = (fetch_gdacs, fetch_usgs)
+DEMO_SOURCES = (demo_gdacs, demo_usgs)
 
 
 def get_hazards(box: Box) -> tuple[list[dict], list[str]]:
     """All sources in parallel. A failed source becomes a warning, the rest still return."""
+    sources = DEMO_SOURCES if demo_mode() else SOURCES
     hazards: list[dict] = []
     warnings: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
-        futures = [(fn.__name__, pool.submit(fn, box)) for fn in SOURCES]
+    with ThreadPoolExecutor(max_workers=len(sources)) as pool:
+        futures = [(fn.__name__, pool.submit(fn, box)) for fn in sources]
         for name, fut in futures:
             try:
                 hazards.extend(fut.result())
