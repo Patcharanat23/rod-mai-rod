@@ -41,10 +41,24 @@ def providers() -> list[dict]:
     return out
 
 
+def clean(snippet: str) -> str:
+    """บรรทัดในเอกสารขึ้นต้นด้วย "- " อยู่แล้ว ตัดออกไม่ให้ขึ้น "- -" ซ้อน"""
+    return snippet.lstrip("-*• ").strip()
+
+
+def document_reply(sources: list[dict]) -> str:
+    """ตอบจากเอกสารตรงๆ ตอน LLM ล่ม รวมบรรทัดของแหล่งเดียวกันแล้วบอกที่มาครั้งเดียว"""
+    by_source: dict[str, list[str]] = {}
+    for s in sources:
+        by_source.setdefault(s["source"], []).append(clean(s["snippet_th"]))
+    parts = ["\n".join(f"- {line}" for line in lines) + f"\n(ที่มา: {src})" for src, lines in by_source.items()]
+    return "ข้อแนะนำจากเอกสาร:\n" + "\n\n".join(parts)
+
+
 def build_messages(message: str, history: list[dict], sources: list[dict]) -> list[dict]:
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
     if sources:
-        refs = "\n".join(f"- {s['snippet_th']} (ที่มา: {s['source']})" for s in sources)
+        refs = "\n".join(f"- {clean(s['snippet_th'])} (ที่มา: {s['source']})" for s in sources)
         msgs.append({"role": "system", "content": "ข้อมูลความปลอดภัยจากเอกสารที่เชื่อถือได้ ใช้ตอบและบอกที่มา:\n" + refs})
     for h in history[-HISTORY_LIMIT:]:
         if h.get("role") in ("user", "assistant") and isinstance(h.get("content"), str):
@@ -73,7 +87,6 @@ def answer(message: str, history: list[dict], sources: list[dict]) -> dict:
     if text is None:
         if sources:
             # LLM ล่มแต่มีข้อมูลจากเอกสาร ยังตอบจากเอกสารตรงๆ ได้
-            lines = [f"- {s['snippet_th']} (ที่มา: {s['source']})" for s in sources]
-            return {"reply": "ข้อแนะนำจากเอกสาร:\n" + "\n".join(lines), "actions": [], "warnings": ["LLM_UNAVAILABLE"]}
+            return {"reply": document_reply(sources), "actions": [], "warnings": ["LLM_UNAVAILABLE"]}
         return {"reply": FALLBACK_REPLY, "actions": [], "warnings": ["LLM_UNAVAILABLE"]}
     return {"reply": text, "actions": [], "warnings": []}
