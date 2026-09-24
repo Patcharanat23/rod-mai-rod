@@ -11,7 +11,7 @@ import { api, ApiError } from "@/shared/api";
 import { riskColor } from "@/shared/risk";
 import { formatDuration, formatThaiTime } from "@/shared/time";
 import { useApi } from "@/shared/useApi";
-import type { Trip, TripPlan } from "@/shared/types";
+import type { PlanWaypoint, Trip, TripPlan } from "@/shared/types";
 import TripForm from "./TripForm";
 
 export default function MyTripPage() {
@@ -20,6 +20,7 @@ export default function MyTripPage() {
   const [creating, setCreating] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState("");
+  const [summary, setSummary] = useState<TripPlan | null>(null);
 
   if (loading || error || !trips) return <StatusBox loading={loading} error={error} onRetry={reload} />;
 
@@ -30,9 +31,9 @@ export default function MyTripPage() {
     setPlanning(true);
     setPlanError("");
     try {
-      await api<TripPlan>(`/trips/${trip.trip_id}/plan`, { method: "POST" });
-      // TODO(web-mytrip): เปิด popup สรุป (เวลาเดินทาง + risk_score + summary_th) หลังแพลนเสร็จ
+      const result = await api<TripPlan>(`/trips/${trip.trip_id}/plan`, { method: "POST" });
       await reload();
+      setSummary(result);
     } catch (e) {
       setPlanError(e instanceof ApiError ? e.message : "วางแผนไม่สำเร็จ");
     } finally {
@@ -106,7 +107,7 @@ export default function MyTripPage() {
                   <RiskBadge level={trip.plan.risk_level} score={trip.plan.risk_score} />
                 </p>
                 <p>{trip.plan.summary_th}</p>
-                {/* TODO(web-mytrip): แท็บขวาแสดงทุก waypoint ORIGIN/STOP/DESTINATION พร้อมเวลาถึง อากาศ และ RiskBadge (README ข้อ 6) */}
+                <WaypointList waypoints={trip.plan.waypoints} />
               </>
             )}
             {/* TODO(web-mytrip): เส้นทางเป็น HIGH ให้แสดง <EmergencyCard hazardType=... /> จาก shared ตามภัยที่เจอ */}
@@ -114,6 +115,73 @@ export default function MyTripPage() {
           </div>
         </div>
       )}
+
+      {summary && <PlanSummaryPopup plan={summary} onClose={() => setSummary(null)} />}
     </>
+  );
+}
+
+const KIND_LABEL: Record<PlanWaypoint["kind"], string> = {
+  ORIGIN: "ต้นทาง",
+  STOP: "จุดแวะ",
+  DESTINATION: "ปลายทาง",
+};
+
+// README ข้อ 6: แสดงครบทุกจุดตามลำดับที่ได้จากแผน (ORIGIN, STOP..., DESTINATION)
+function WaypointList({ waypoints }: { waypoints: PlanWaypoint[] }) {
+  return (
+    <ol style={{ listStyle: "none", padding: 0, margin: "12px 0 0" }}>
+      {waypoints.map((w) => (
+        <li
+          key={w.waypoint_id}
+          style={{ borderTop: "1px solid #eee", padding: "10px 0", display: "grid", gap: 4 }}
+        >
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <strong>
+              {KIND_LABEL[w.kind]}: {w.name}
+            </strong>
+            <RiskBadge level={w.risk_level} />
+          </div>
+          <span>ถึง {formatThaiTime(w.eta)}</span>
+          <span>อากาศ {w.forecast?.condition_th ?? "ไม่มีข้อมูล"}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+// popup หลัง Plan สำเร็จ ใช้ค่าระดับบนสุดของ TripPlan (= เส้นที่แนะนำ ตาม README ข้อ 5)
+function PlanSummaryPopup({ plan, onClose }: { plan: TripPlan; onClose: () => void }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="plan-summary-title"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        zIndex: 1000,
+      }}
+    >
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>
+        <h3 id="plan-summary-title" style={{ marginTop: 0 }}>
+          สรุปแผนการเดินทาง
+        </h3>
+        <p>เวลาเดินทาง {formatDuration(plan.duration_min)}</p>
+        <p>
+          คะแนนความเสี่ยง {plan.risk_score ?? "-"} <RiskBadge level={plan.risk_level} />
+        </p>
+        <p>{plan.summary_th}</p>
+        <button className="btn" onClick={onClose} autoFocus>
+          ปิด
+        </button>
+      </div>
+    </div>
   );
 }
