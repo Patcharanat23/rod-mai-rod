@@ -1,7 +1,7 @@
 """routing-engine
 
 fetch_routes() หาเส้นทางจริงจาก OSRM ส่งทุกเส้นไป risk-decision ในคำขอเดียว แล้วประกอบ TripPlan (build_plan)
-ยังไม่มี: samples ทุก 20 กม., DEMO_MODE ดู README
+ยังไม่มี: DEMO_MODE ดู README
 """
 import os
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from envelope import ApiError, call, ok, setup
-from geo import to_iso
+from geo import haversine_km, to_iso
 
 app = FastAPI(title="routing-engine")
 setup(app, "routing-engine")
@@ -25,6 +25,7 @@ OSRM_DOWNLOAD_TIMEOUT = 90  # ถ้าเกิน OSRM_TIMEOUT ยังโห
 # polyline เล็กกว่า geojson ประมาณ 6 เท่า OSRM สาธารณะส่งข้อมูลมาไทยช้ามาก
 OSRM_PARAMS = {"alternatives": "3", "overview": "full", "geometries": "polyline"}
 MAX_GEOMETRY_POINTS = 500  # CONTRACT หัวข้อ 4
+SAMPLE_STEP_KM = 20  # ระยะห่างจุดที่ส่งไปประเมินความเสี่ยง
 
 _cache: dict[tuple, dict] = {}
 _pending: dict[tuple, Future] = {}
@@ -122,17 +123,48 @@ def simplify(points: list[tuple[float, float]], limit: int = MAX_GEOMETRY_POINTS
     return [{"lat": lat, "lng": lng} for lat, lng in points]
 
 
+def leg_bounds(points: list[tuple[float, float]], snapped: list[list[float]]) -> list[int]:
+    """index ใน geometry ของแต่ละ stop จาก waypoints[].location ([lng, lat]) ของ OSRM หาไล่ไปข้างหน้า"""
+    bounds, start = [0], 0
+    for lng, lat in snapped[1:-1]:
+        start = min(range(start, len(points)),
+                    key=lambda k: (points[k][0] - lat) ** 2 + (points[k][1] - lng) ** 2)
+        bounds.append(start)
+    return bounds + [len(points) - 1]
+
+
+def sample_points(points: list[tuple[float, float]], bounds: list[int], legs: list[dict],
+                  step_km: float = SAMPLE_STEP_KM) -> list[dict]:
+    """จุดทุก step_km ตาม geometry เต็ม นับใหม่ทุก stop ไม่รวม stop
+    เวลาของแต่ละ leg แบ่งตามสัดส่วนระยะ จุดที่ห่าง stop ถัดไปไม่ถึงครึ่ง step ข้ามไป (stop ถูกประเมินอยู่แล้ว)"""
+    samples, leg_start_min = [], 0.0
+    for leg, a, b in zip(legs, bounds, bounds[1:]):
+        seg = [haversine_km({"lat": p[0], "lng": p[1]}, {"lat": q[0], "lng": q[1]})
+               for p, q in zip(points[a:b], points[a + 1:b + 1])]
+        total, done, mark = sum(seg), 0.0, step_km
+        for k, d in enumerate(seg):
+            while d > 0 and done + d >= mark and mark <= total - step_km / 2:
+                t = (mark - done) / d
+                (lat1, lng1), (lat2, lng2) = points[a + k], points[a + k + 1]
+                samples.append({"lat": lat1 + (lat2 - lat1) * t, "lng": lng1 + (lng2 - lng1) * t,
+                                "minute": leg_start_min + mark / total * leg["duration"] / 60})
+                mark += step_km
+            done += d
+        leg_start_min += leg["duration"] / 60
+    return samples
+
+
 def fetch_routes(stops: list[Place]) -> list[dict]:
     """คืนเส้นทางทั้งหมด เส้นแรกต้องเป็นเส้นหลัก (เร็วที่สุด)
 
     แต่ละเส้น: {route_id, duration_min, distance_km, geometry: [{lat, lng}],
                stop_minutes: [นาทีสะสมตอนถึงแต่ละ stop เริ่มที่ 0], samples: [{lat, lng, minute}]}
     samples คือจุดตัวอย่างระหว่างทางประมาณทุก 20 กม. พร้อมนาทีสะสม (ไม่รวม stop)
-
-    TODO(routing-engine): samples ไล่ geometry เต็มคิดระยะด้วย haversine_km แบ่งเวลาของแต่ละ leg ตามสัดส่วนระยะ
     """
+    body = osrm_request(stops)
     routes = []
-    for i, r in enumerate(osrm_request(stops)["routes"], start=1):
+    for i, r in enumerate(body["routes"], start=1):
+        points = decode_polyline(r["geometry"])
         stop_minutes = [0.0]
         for leg in r["legs"]:
             stop_minutes.append(stop_minutes[-1] + leg["duration"] / 60)
@@ -140,9 +172,10 @@ def fetch_routes(stops: list[Place]) -> list[dict]:
             "route_id": f"r{i}",
             "duration_min": round(r["duration"] / 60),
             "distance_km": round(r["distance"] / 1000),
-            "geometry": simplify(decode_polyline(r["geometry"])),
+            "geometry": simplify(points),
             "stop_minutes": stop_minutes,
-            "samples": [],
+            "samples": sample_points(points, leg_bounds(points, [w["location"] for w in body["waypoints"]]),
+                                     r["legs"]),
         })
     return routes
 
