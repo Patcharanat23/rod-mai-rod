@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -134,32 +135,55 @@ def score(query: str, line: str) -> float:
     line_grams = get_trigrams(line)
     if not query_grams or not line_grams:
         return 0.0
-    
-    # นับจำนวน trigram ที่ตรงกันโดยตรง
+
     return float(len(query_grams.intersection(line_grams)))
+
+
+def search_with_embeddings_fallback(query: str, wanted: set[str], limit: int) -> Optional[list[dict]]:
+    """พยายามค้นหาด้วย Embeddings/Semantic Search หากไม่พร้อมใช้งานจะคืนค่า None เพื่อ Fallback"""
+    enable_embeddings = os.getenv("ENABLE_EMBEDDINGS", "false").lower() == "true"
+    if not enable_embeddings:
+        return None
+
+    try:
+        # สงวนโครงสร้างรองรับ Semantic Model หรือ Vector Search แบบ Offline
+        # หากไม่มี Key หรือเกิด Exception จะถูกส่งไปยัง Trigram Fallback ทันที
+        return None
+    except Exception:
+        return None
 
 
 @app.post("/api/v1/safety/search")
 def search(body: SearchIn):
     if not body.query.strip():
         raise ApiError("VALIDATION_ERROR", "ข้อความค้นหาว่าง")
-    
+
     wanted = set(body.hazard_types)
+
+    # ลองใช้งาน Embeddings หากเปิดใช้งานและพร้อมทำงาน
+    emb_results = search_with_embeddings_fallback(body.query, wanted, body.limit)
+    if emb_results is not None:
+        return ok({"results": emb_results, "warnings": []})
+
+    # --- Trigram Search Logic (พร้อมการคิดคะแนน title_th และ Filter) ---
     query_grams = get_trigrams(body.query)
-    
-    # คำนวณ Threshold: ต้องตรงอย่างน้อย 3 trigrams หรืออย่างน้อยครึ่งหนึ่งของ query trigrams
     min_match_threshold = min(3, len(query_grams) // 2) if len(query_grams) >= 2 else 1
 
     hits = []
     for doc in DOCS:
         if wanted and not wanted & set(doc["hazard_types"]):
             continue
+
+        # ให้คะแนนส่วน title_th โดยเพิ่มน้ำหนักเป็น 2 เท่า
+        title_s = score(body.query, doc["title_th"]) * 2.0
+
         for line in doc["lines"]:
             s = score(body.query, line)
-            
+            max_s = max(s, title_s)
+
             # กรองคำที่ไม่เกี่ยวข้องออกด้วย min_match_threshold
-            if s >= min_match_threshold and s > 0:
-                score_weight = s + (1 if wanted else 0)
+            if max_s >= min_match_threshold and max_s > 0:
+                score_weight = max_s + (1.0 if wanted else 0.0)
                 hits.append((
                     score_weight,
                     {
@@ -169,8 +193,21 @@ def search(body: SearchIn):
                         "source": doc["source"],
                     },
                 ))
+
     hits.sort(key=lambda h: -h[0])
-    return ok({"results": [h[1] for h in hits[: body.limit]], "warnings": []})
+
+    # ป้องกันผลลัพธ์ซ้ำซ้อนและจำกัดตามจำนวน limit
+    unique_results = []
+    seen = set()
+    for _, item in hits:
+        key = (item["doc_id"], item["snippet_th"])
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(item)
+            if len(unique_results) >= body.limit:
+                break
+
+    return ok({"results": unique_results, "warnings": []})
 
 
 @app.get("/api/v1/safety/emergency")
