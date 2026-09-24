@@ -6,16 +6,26 @@
 ห้ามลบ endpoint ไหนออกก่อนมีของจริงมาแทน และรูปแบบข้อมูลต้องตรงกับ docs/CONTRACT.md หัวข้อ 6
 """
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, Header
 from pydantic import BaseModel, Field
 
+import db
 from envelope import ApiError, call, ok, setup
 from geo import in_thailand, to_iso
 
-app = FastAPI(title="api-backend")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    yield
+    db.close_db()
+
+
+app = FastAPI(title="api-backend", lifespan=lifespan)
 setup(app, "api-backend")
 
 DEMO_USER = {"user_id": "u-0001", "email": "demo@example.com"}
