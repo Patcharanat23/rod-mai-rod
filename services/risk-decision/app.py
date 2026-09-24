@@ -4,9 +4,10 @@
 คิดระดับตามเกณฑ์ CONTRACT หัวข้อ 4 และจุดที่ไม่มีข้อมูลเป็น null พร้อม WEATHER_UNAVAILABLE
 หมุดภัยในรัศมี 20 กม. รอบแต่ละจุดก็รวมเข้ากับระดับความเสี่ยงแล้ว (7.1)
 risk_score คิดจากความรุนแรงจริงของปัจจัยที่แย่ที่สุดแล้ว ไม่ใช่ค่าคงที่ (7.2)
-ที่ยังต้องทำ: ดูที่ TODO(risk-decision) ในไฟล์นี้ (summary_th, DELAY)
+summary_th บอกสาเหตุ ระยะทางจากจุดเริ่มต้น เวลาไทยโดยประมาณ และควรทำอะไรแล้ว (7.3)
+ที่ยังต้องทำ: ดูที่ TODO(risk-decision) ในไฟล์นี้ (DELAY, เสริม)
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI
@@ -29,6 +30,7 @@ HAZARD_RADIUS_KM = 20.0
 _BBOX_PAD_DEG = HAZARD_RADIUS_KM / 111.0
 SCORE_RANGE = {"LOW": (0, 33), "MEDIUM": (34, 66), "HIGH": (67, 100)}
 _ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+THAI_TZ = timezone(timedelta(hours=7))  # ไทยไม่มี DST offset คงที่ตลอดปี
 
 
 class Point(BaseModel):
@@ -141,16 +143,63 @@ def decide(results: list[dict]) -> tuple[str, str]:
     return main["route_id"], "NORMAL"
 
 
-def summary_text(main_level: Optional[str], recommendation: str) -> str:
-    # TODO(risk-decision): บอกว่าเสี่ยงที่ไหน ช่วงกี่โมง ควรทำอะไร (README ข้อ 9)
-    if main_level is None:
+def _worst_point_and_distance(route: dict) -> tuple[Optional[dict], float]:
+    """จุดที่เสี่ยงที่สุดบนเส้นทาง (ถ้าเสมอกันเอาจุดแรก) พร้อมระยะสะสมจากจุดเริ่มต้นถึงจุดนั้น (กม.)
+    ไม่มีชื่อจุดพักให้ใช้ในระบบนี้ เลยรายงานเป็นระยะทางแทน (README ข้อ 9 บอก 'ถ้าเป็นไปได้')"""
+    points = route["points"]
+    known = [(i, p) for i, p in enumerate(points) if p["risk_level"] is not None]
+    if not known:
+        return None, 0.0
+    idx, point = max(known, key=lambda ip: _ORDER[ip[1]["risk_level"]])
+    distance = sum(haversine_km(points[j], points[j + 1]) for j in range(idx))
+    return point, distance
+
+
+def _thai_time_th(iso_z: str) -> str:
+    """เวลาไทย (UTC+7) จาก ISO UTC string เช่น '2026-09-24T03:00:00Z' -> '10:00 น.'"""
+    dt = datetime.strptime(iso_z, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    local = dt.astimezone(THAI_TZ)
+    return f"{local.hour}:{local.minute:02d} น."
+
+
+def _risk_cause_th(point: dict) -> str:
+    """สาเหตุหลักที่ทำให้จุดนี้ได้ level นี้ เป็นภาษาไทยสั้นๆ (ปัจจัยเดียวกับที่ point_severity ใช้)"""
+    level, forecast, hazards = point["risk_level"], point["forecast"], point["hazards"]
+    heavy = level == "HIGH"
+    causes = []
+    if forecast and rain_level(forecast["rain_mm_per_h"]) == level:
+        causes.append("ฝนตกหนัก" if heavy else "ฝนตก")
+    if forecast and wind_level(forecast["wind_kmh"]) == level:
+        causes.append("ลมแรงจัด" if heavy else "ลมแรง")
+    if worst([h["severity"] for h in hazards]) == level:
+        causes.append("มีหมุดภัยรุนแรง" if heavy else "มีหมุดภัยเฝ้าระวัง")
+    return "และ".join(causes) if causes else "สภาพอากาศแปรปรวน"
+
+
+def summary_text(main: dict, recommended: dict, recommendation: str) -> str:
+    """สรุปเป็นภาษาไทยว่าเสี่ยงเพราะอะไร ตรงไหน กี่โมง และควรทำอะไร (README ข้อ 9 ต้องไม่ว่างเปล่า)"""
+    level = main["risk_level"]
+    if level is None:
         return "ตอนนี้ประเมินความเสี่ยงไม่ได้ ข้อมูลสภาพอากาศไม่พร้อม"
-    return {
-        "REROUTE": "เส้นทางหลักมีความเสี่ยง แนะนำเส้นทางสำรอง",
-        "DELAY": "ถ้าเลื่อนเวลาออกเดินทาง ความเสี่ยงจะลดลง",
-        "AVOID": "เส้นทางมีความเสี่ยงสูง ควรเลี่ยงการเดินทางช่วงนี้",
-    }.get(recommendation, "สภาพอากาศตลอดเส้นทางปกติ" if main_level == "LOW"
-          else "มีความเสี่ยงบางช่วง ขับช้าลงและเปิดไฟหน้า")
+    if level == "LOW":
+        return "สภาพอากาศตลอดเส้นทางปกติ เดินทางได้ตามปกติ"
+
+    point, distance_km = _worst_point_and_distance(main)
+    where = f"ช่วงประมาณ {round(distance_km)} กม. จากจุดเริ่มต้น" if point else "บางช่วงของเส้นทาง"
+    when = f" เวลาประมาณ {_thai_time_th(point['eta'])}" if point else ""
+    cause = _risk_cause_th(point) if point else "สภาพอากาศแปรปรวน"
+
+    if recommendation == "REROUTE":
+        slower = round(recommended["duration_min"] - main["duration_min"])
+        action = f"แนะนำเส้นทางสำรอง ช้ากว่าเดิม {slower} นาที" if slower > 0 else "แนะนำเส้นทางสำรอง ไม่ช้ากว่าเดิม"
+    elif recommendation == "DELAY":
+        action = "แนะนำเลื่อนเวลาออกเดินทาง ความเสี่ยงจะลดลง"
+    elif recommendation == "AVOID":
+        action = "ควรเลี่ยงการเดินทางช่วงนี้"
+    else:
+        action = "ขับช้าลงและเปิดไฟหน้า"
+
+    return f"{cause} {where}{when} {action}"
 
 
 def fetch_forecasts(points: list[dict]) -> tuple[list[Optional[dict]], list[str]]:
@@ -215,12 +264,14 @@ def evaluate(body: EvaluateIn):
                         "risk_score": max(scores) if scores else None, "points": points})
 
     recommended_id, recommendation = decide(results)
+    recommended = next(r for r in results if r["route_id"] == recommended_id)
+    summary = summary_text(results[0], recommended, recommendation)
     for r in results:
         r.pop("duration_min")
     return ok({
         "routes": results,
         "recommended_route_id": recommended_id,
         "recommendation": recommendation,
-        "summary_th": summary_text(results[0]["risk_level"], recommendation),
+        "summary_th": summary,
         "warnings": sorted(set(warnings)),
     })

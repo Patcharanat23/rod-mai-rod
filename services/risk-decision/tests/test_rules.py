@@ -1,7 +1,8 @@
 import pytest
 
-from app import (decide, hazard_severity, nearby_hazards, point_level, point_severity, rain_level,
-                  rain_severity, score_in_band, wind_level, wind_severity, worst)
+from app import (_risk_cause_th, _thai_time_th, _worst_point_and_distance, decide, hazard_severity,
+                  nearby_hazards, point_level, point_severity, rain_level, rain_severity, score_in_band,
+                  summary_text, wind_level, wind_severity, worst)
 from geo import haversine_km, score_to_level
 
 EARTH_DEG_KM = 111.194926644  # กม.ต่อ 1 องศาละติจูด (R * pi/180, R=6371 กม.)
@@ -155,3 +156,72 @@ def test_point_severity_ties_take_the_higher_value():
     severity = point_severity(forecast, [], BKK, level)
     assert severity == pytest.approx(max(rain_severity(34), wind_severity(41)))
     assert severity == pytest.approx(rain_severity(34))
+
+
+# --- 7.3: summary_th ---
+
+def _point(base, km, eta, rain, wind, level, hazards=None):
+    return {**_point_north_of(base, km), "eta": eta, "forecast": {"rain_mm_per_h": rain, "wind_kmh": wind},
+            "hazards": hazards or [], "risk_level": level, "risk_score": 0}
+
+
+def test_summary_low_is_reassuring_and_ignores_points():
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": "LOW", "points": []}
+    assert summary_text(main, main, "NORMAL") == "สภาพอากาศตลอดเส้นทางปกติ เดินทางได้ตามปกติ"
+
+
+def test_summary_none_when_no_forecast():
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": None, "points": []}
+    assert summary_text(main, main, "NORMAL") == "ตอนนี้ประเมินความเสี่ยงไม่ได้ ข้อมูลสภาพอากาศไม่พร้อม"
+
+
+def test_thai_time_conversion():
+    assert _thai_time_th("2026-09-24T03:00:00Z") == "10:00 น."
+    assert _thai_time_th("2026-09-24T20:00:00Z") == "3:00 น."  # ข้ามวัน UTC 20:00 = ไทย 03:00 วันถัดไป
+
+
+def test_risk_cause_combines_tied_factors():
+    point = {"risk_level": "HIGH", "forecast": {"rain_mm_per_h": 40, "wind_kmh": 70}, "hazards": []}
+    assert _risk_cause_th(point) == "ฝนตกหนักและลมแรงจัด"
+
+
+def test_worst_point_and_distance_finds_worst_and_measures_from_start():
+    p0 = _point(BKK, 0, "2026-09-24T02:40:00Z", 2, 10, "LOW")
+    p1 = _point(BKK, 20, "2026-09-24T03:00:00Z", 40, 10, "HIGH")
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": "HIGH", "points": [p0, p1]}
+    point, distance = _worst_point_and_distance(main)
+    assert point is p1
+    assert distance == pytest.approx(20, abs=0.1)
+
+
+def test_summary_reroute_names_cause_distance_time_and_delay():
+    p0 = _point(BKK, 0, "2026-09-24T02:40:00Z", 2, 10, "LOW")
+    p1 = _point(BKK, 20, "2026-09-24T03:00:00Z", 40, 10, "HIGH")
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": "HIGH", "points": [p0, p1]}
+    recommended = {"route_id": "r2", "duration_min": 115, "risk_level": "LOW", "points": []}
+    summary = summary_text(main, recommended, "REROUTE")
+    assert "ฝนตกหนัก" in summary
+    assert "20 กม." in summary
+    assert "10:00 น." in summary
+    assert "ช้ากว่าเดิม 15 นาที" in summary
+
+
+def test_summary_avoid_and_delay_say_what_to_do():
+    p1 = _point(BKK, 5, "2026-09-24T03:00:00Z", 40, 10, "HIGH")
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": "HIGH", "points": [p1]}
+    assert "เลี่ยงการเดินทาง" in summary_text(main, main, "AVOID")
+    assert "เลื่อนเวลา" in summary_text(main, main, "DELAY")
+
+
+def test_summary_is_never_empty():
+    cases = [
+        {"route_id": "r1", "duration_min": 100, "risk_level": None, "points": []},
+        {"route_id": "r1", "duration_min": 100, "risk_level": "LOW", "points": []},
+        {"route_id": "r1", "duration_min": 100, "risk_level": "MEDIUM",
+         "points": [_point(BKK, 3, "2026-09-24T03:00:00Z", 20, 10, "MEDIUM")]},
+        {"route_id": "r1", "duration_min": 100, "risk_level": "HIGH",
+         "points": [_point(BKK, 3, "2026-09-24T03:00:00Z", 40, 10, "HIGH")]},
+    ]
+    for main in cases:
+        for recommendation in ["NORMAL", "REROUTE", "DELAY", "AVOID"]:
+            assert len(summary_text(main, main, recommendation)) > 0
