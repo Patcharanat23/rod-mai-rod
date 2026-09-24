@@ -234,8 +234,9 @@ def summary_text(main: dict, recommended: dict, recommendation: str, delay_hours
 
 def fetch_forecasts(points: list[dict]) -> tuple[list[Optional[dict]], list[str]]:
     """พยากรณ์ของทุกจุดเรียงตามลำดับที่ส่งไป จุดที่ไม่มีข้อมูลเป็น None
-    ไม่ส่งต่อ WEATHER_UNAVAILABLE จาก weather-disaster ตรงๆ (คำขอนี้อาจมีจุดเลื่อนเวลาของ DELAY
-    ปนอยู่ ไม่รู้ว่า warning มาจากจุดไหน) ผู้เรียกเช็คจุดจริงของตัวเองแล้วใส่ warning เองอยู่แล้ว"""
+    ส่งต่อ warnings ของ weather-disaster ตรงๆ ตามที่ได้มา (ฟังก์ชันนี้ไม่รู้ว่าผู้เรียกส่งจุดอะไรมาบ้าง)
+    ผู้เรียกที่ผสมจุดสมมติ (เช่น DELAY) ปนกับจุดจริงในคำขอเดียวกัน ต้องกรอง warning ที่ไม่รู้ว่ามาจาก
+    จุดไหนเอาเอง ตรงจุดที่รู้ว่าผสมอะไรลงไป"""
     try:
         data = call("WEATHER_DISASTER_URL", "POST", "/api/v1/forecast/points", timeout=WEATHER_TIMEOUT,
                     json={"points": [{"lat": p["lat"], "lng": p["lng"], "time": p["eta"]} for p in points]})
@@ -244,7 +245,7 @@ def fetch_forecasts(points: list[dict]) -> tuple[list[Optional[dict]], list[str]
     forecasts = [p.get("forecast") for p in data["points"]]
     if len(forecasts) != len(points):
         return [None] * len(points), ["WEATHER_UNAVAILABLE"]
-    return forecasts, [w for w in data.get("warnings", []) if w != "WEATHER_UNAVAILABLE"]
+    return forecasts, data.get("warnings", [])
 
 
 def fetch_hazards(points: list[dict]) -> tuple[list[dict], list[str]]:
@@ -281,7 +282,11 @@ def evaluate(body: EvaluateIn):
                              for p in main_points] for hours in DELAY_OFFSET_HOURS}
     combined = flat + [pt for hours in DELAY_OFFSET_HOURS for pt in delayed_flat[hours]]
 
-    all_forecasts, warnings = fetch_forecasts(combined)
+    all_forecasts, forecast_warnings = fetch_forecasts(combined)
+    # คำขอนี้มีจุดเลื่อนเวลาของ DELAY ปนอยู่กับจุดจริง (ผสมไว้เองด้านบน) เลยไม่รู้ว่า
+    # WEATHER_UNAVAILABLE ที่ weather-disaster ตอบมาเป็นของจุดจริงหรือจุดสมมติ ตัดออกแล้วปล่อยให้
+    # เช็ค risk_level ของจุดจริงด้านล่างเป็นคนใส่ warning นี้เองแทน (scope เฉพาะจุดจริงจริงๆ)
+    warnings = [w for w in forecast_warnings if w != "WEATHER_UNAVAILABLE"]
     hazards, hazard_warnings = fetch_hazards(flat)  # ตำแหน่งเดิม เวลาเลื่อนไม่กระทบกรอบพิกัด
     warnings = warnings + hazard_warnings
 
