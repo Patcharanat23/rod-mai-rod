@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 from openai import OpenAI, OpenAIError
 
+import rules
 import tools
 from envelope import _request_id
 
@@ -176,7 +177,9 @@ def answer(message: str, history: list[dict], sources: list[dict], run_tool: Opt
         return {"reply": text, "actions": actions, "warnings": []}
     if changed:
         return {"reply": done_reply(changed), "actions": actions, "warnings": ["LLM_UNAVAILABLE"]}
-    if sources:
+    # คำสั่งเกี่ยวกับทริป เช่น "ทริป 1 ออกเร็วขึ้น" ค้นเอกสารเจอ "ความเร็ว" ได้ ตอบจากเอกสารจะไม่ตรงคำถาม
+    # ให้บอกคำสั่งที่ยังใช้ได้แทน
+    if sources and not (rules.MOVE.search(message) or rules.TRIP_NO.search(message)):
         # LLM ล่มแต่มีข้อมูลจากเอกสาร ยังตอบจากเอกสารตรงๆ ได้
         return {"reply": document_reply(sources), "actions": [], "warnings": ["LLM_UNAVAILABLE"]}
     return {"reply": FALLBACK_REPLY, "actions": [], "warnings": ["LLM_UNAVAILABLE"]}
