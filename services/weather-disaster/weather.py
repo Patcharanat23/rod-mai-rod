@@ -1,4 +1,5 @@
 """Hourly forecast from Open-Meteo for points along a route."""
+import math
 import threading
 import time
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ HOURLY_VARS = "precipitation,wind_speed_10m,temperature_2m,weather_code"
 TIMEOUT_S = 8
 CACHE_TTL_S = 30 * 60
 CACHE_MAX = 5000
+AREA_STEP_KM = 25
+KM_PER_DEG_LAT = 111.32
 
 # WMO weather codes used by Open-Meteo
 WMO_TH = {
@@ -177,3 +180,14 @@ def forecast_points(points: list[tuple[float, float, datetime]]) -> tuple[list[d
         if warning and warning not in warnings:
             warnings.append(warning)
     return results, warnings
+
+
+def area_grid(lat: float, lng: float) -> list[tuple[float, float]]:
+    """3x3 cells about AREA_STEP_KM apart, south-west first, the centre is index 4."""
+    dlat = AREA_STEP_KM / KM_PER_DEG_LAT
+    # a degree of longitude shrinks towards the poles
+    dlng = AREA_STEP_KM / (KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01))
+    return [
+        (round(lat + dy * dlat, 4), round(lng + dx * dlng, 4))
+        for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+    ]
