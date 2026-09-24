@@ -19,7 +19,10 @@ def load(name: str) -> dict:
 
 @pytest.fixture(autouse=True)
 def offline_osrm(monkeypatch):
-    """เทสต์ห้ามยิง OSRM จริง ใช้คำตอบที่บันทึกไว้แทน"""
+    """เทสต์ห้ามยิง OSRM จริง ใช้คำตอบที่บันทึกไว้แทน และเริ่มทุกเทสต์ด้วย cache ว่าง"""
     def fake(stops):
-        return load(SAVED[tuple((round(s.lat, 3), round(s.lng, 3)) for s in stops)])
+        return load(SAVED[routing.route_key(stops)])
     monkeypatch.setattr(routing, "osrm_request", fake)
+    monkeypatch.setenv("OSRM_BASE_URL", "http://osrm.test")
+    routing._cache.clear()
+    routing._pending.clear()
