@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Map from "@/shared/Map";
 import { api, ApiError } from "@/shared/api";
 import { thaiInputToUtc } from "@/shared/time";
+import { useLocation } from "@/shared/useLocation";
 import type { LatLng, Place, Trip, TripInput } from "@/shared/types";
 
 type Props = { onCreated: (t: Trip) => void; onCancel: () => void };
@@ -22,7 +23,6 @@ const TARGET_LABEL: Record<Target, string> = { origin: "ต้นทาง", des
 
 const smallBtn = { padding: "4px 12px", fontSize: 13 };
 
-// TODO(web-mytrip): ปุ่ม "ใช้ตำแหน่งปัจจุบัน" (README ข้อ 2)
 export default function TripForm({ onCreated, onCancel }: Props) {
   const [origin, setOrigin] = useState<Place | null>(null);
   const [destination, setDestination] = useState<Place | null>(null);
@@ -31,6 +31,8 @@ export default function TripForm({ onCreated, onCancel }: Props) {
   const [departure, setDeparture] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [locateMsg, setLocateMsg] = useState("");
 
   // ใส่จุดลงช่องที่กำลังเลือกอยู่ แล้วเลื่อนไปช่องถัดไปที่ยังว่าง
   function place(p: Place) {
@@ -50,6 +52,17 @@ export default function TripForm({ onCreated, onCancel }: Props) {
     if (!target) return;
     const name = target === "stop" ? `จุดแวะ ${stops.length + 1}` : TARGET_LABEL[target];
     place({ lat: p.lat, lng: p.lng, name });
+  }
+
+  // README ข้อ 2: ไม่ได้รับอนุญาตหรือเปิดผ่านที่อยู่ที่ไม่ใช่ https/localhost ต้องบอกและให้เลือกเอง
+  function located(pos: LatLng, denied: boolean) {
+    setLocating(false);
+    if (denied) {
+      setLocateMsg("ใช้ตำแหน่งปัจจุบันไม่ได้ (ไม่ได้รับอนุญาต หรือเบราว์เซอร์ไม่ให้ใช้ตำแหน่งบนหน้านี้) จิ้มแผนที่หรือกดสถานที่ตัวอย่างแทน");
+      return;
+    }
+    setLocateMsg("");
+    place({ lat: pos.lat, lng: pos.lng, name: "ตำแหน่งปัจจุบัน" });
   }
 
   function rename(which: Target, name: string, index = 0) {
@@ -111,7 +124,7 @@ export default function TripForm({ onCreated, onCancel }: Props) {
         <p className="muted" style={{ marginBottom: 6 }}>
           สถานที่ตัวอย่าง{target ? ` (ใส่เป็น${TARGET_LABEL[target]})` : ""}
         </p>
-        <div className="row" style={{ marginBottom: 14 }}>
+        <div className="row" style={{ marginBottom: 8 }}>
           {PRESETS.map((p) => (
             <button
               key={p.name}
@@ -125,6 +138,26 @@ export default function TripForm({ onCreated, onCancel }: Props) {
             </button>
           ))}
         </div>
+        <div className="row" style={{ marginBottom: locateMsg ? 6 : 14 }}>
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={smallBtn}
+            disabled={!target || locating}
+            onClick={() => {
+              setLocateMsg("");
+              setLocating(true);
+            }}
+          >
+            {locating ? "กำลังหาตำแหน่ง..." : "ใช้ตำแหน่งปัจจุบัน"}
+          </button>
+        </div>
+        {locateMsg && (
+          <p className="error-text" style={{ marginTop: 0 }}>
+            {locateMsg}
+          </p>
+        )}
+        {locating && <Locator onDone={located} />}
 
         <PointField
           title="ต้นทาง"
@@ -183,6 +216,15 @@ export default function TripForm({ onCreated, onCancel }: Props) {
       </form>
     </div>
   );
+}
+
+// ขอตำแหน่งตอนกดปุ่มเท่านั้น (useLocation ขอทันทีที่ถูก mount) ได้ผลแล้วส่งกลับครั้งเดียว
+function Locator({ onDone }: { onDone: (pos: LatLng, denied: boolean) => void }) {
+  const { pos, denied } = useLocation();
+  useEffect(() => {
+    if (pos) onDone(pos, denied);
+  }, [pos, denied]);
+  return null;
 }
 
 type PointFieldProps = {
