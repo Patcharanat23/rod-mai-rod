@@ -13,6 +13,19 @@ jobs:
       fail-fast: false
       matrix:
         service: [api-backend, routing-engine, weather-disaster, risk-decision, assistant-agent, safety-knowledge]
+    # api-backend มีเทสต์ที่ต้องใช้ฐานข้อมูลจริง
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rodmairod
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: rodmairod
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U rodmairod" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://rodmairod:changeme@localhost:5433/rodmairod
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
