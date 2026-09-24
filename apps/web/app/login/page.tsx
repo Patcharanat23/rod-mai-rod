@@ -30,28 +30,48 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="card" style={{ maxWidth: 400, margin: "80px auto" }}>
-      <h2>{mode === "login" ? "เข้าสู่ระบบ" : "สมัครสมาชิก"}</h2>
-      <form onSubmit={submit}>
-        <label>
-          อีเมล
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label>
-          รหัสผ่าน (อย่างน้อย 6 ตัว)
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} required />
-        </label>
-        {error && <p className="error-text">{error}</p>}
-        <button className="btn" disabled={busy} style={{ width: "100%" }}>
-          {busy ? "กำลังดำเนินการ..." : mode === "login" ? "เข้าสู่ระบบ" : "สมัครและเข้าสู่ระบบ"}
-        </button>
-      </form>
-      <p className="muted">
-        {mode === "login" ? "ยังไม่มีบัญชี? " : "มีบัญชีแล้ว? "}
-        <button className="btn-link" onClick={() => setMode(mode === "login" ? "register" : "login")}>
-          {mode === "login" ? "สมัครสมาชิก" : "เข้าสู่ระบบ"}
-        </button>
-      </p>
+    <div className="login">
+      <section className="login-hero">
+        <div className="brand">
+          <img src="/mascot/nong-taem-icon.png" alt="" />
+          <span>
+            <strong>รอดไม่รอด</strong>
+            <small>rod-mai-rod</small>
+          </span>
+        </div>
+        <p className="eyebrow">Your safer way forward</p>
+        <h1>
+          ทุกเส้นทาง
+          <br />
+          รอดได้ ถ้าวางแผนดี
+        </h1>
+        <p className="muted">เช็กเส้นทาง อากาศ และความปลอดภัยก่อนออกเดินทางไปกับน้องแต้ม</p>
+        <img className="login-mascot" src="/mascot/nong-taem-fullbody.png" alt="น้องแต้ม มาสคอตของรอดไม่รอด" />
+      </section>
+      <section className="login-form">
+        <p className="eyebrow">{mode === "login" ? "ยินดีต้อนรับกลับ" : "เริ่มต้นใช้งาน"}</p>
+        <h2>{mode === "login" ? "เข้าสู่ระบบ" : "สมัครสมาชิก"}</h2>
+        <form onSubmit={submit}>
+          <label>
+            อีเมล
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          </label>
+          <label>
+            รหัสผ่าน (อย่างน้อย 6 ตัว)
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} required />
+          </label>
+          {error && <p className="error-text">{error}</p>}
+          <button className="btn" disabled={busy} style={{ width: "100%" }}>
+            {busy ? "กำลังดำเนินการ..." : mode === "login" ? "เข้าสู่ระบบ" : "สมัครและเข้าสู่ระบบ"}
+          </button>
+        </form>
+        <p className="muted">
+          {mode === "login" ? "ยังไม่มีบัญชี? " : "มีบัญชีแล้ว? "}
+          <button className="btn-link" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+            {mode === "login" ? "สมัครสมาชิก" : "เข้าสู่ระบบ"}
+          </button>
+        </p>
+      </section>
     </div>
   );
 }
