@@ -89,13 +89,28 @@ def test_values_are_for_the_current_hour(open_meteo):
     assert data["center"] == {"lat": 18.79, "lng": 98.98}
 
 
-def test_open_meteo_down_gives_null_cells_not_error(open_meteo):
+def test_open_meteo_down_gives_empty_cells_not_error(open_meteo):
     open_meteo["down"] = True
     status, body = get_area()
     assert status == 200
+    assert body["error"] is None
+    assert body["data"]["cells"] == []
+    assert body["data"]["warnings"] == ["WEATHER_UNAVAILABLE"]
+
+
+def test_only_cells_with_data_are_returned(monkeypatch):
+    def fake_get(url, params=None, timeout=None):
+        n = len(params["latitude"].split(","))
+        blocks = [{"hourly": hourly_around_now(1000 * i)} for i in range(n)]
+        blocks[0]["hourly"]["precipitation"] = [None] * len(blocks[0]["hourly"]["time"])
+        return FakeResponse(blocks)
+
+    monkeypatch.setattr(weather.httpx, "get", fake_get)
+    _, body = get_area()
     cells = body["data"]["cells"]
-    assert len(cells) == 9
-    assert all(c["forecast"] is None for c in cells)
+    assert len(cells) == 8
+    assert all(c["forecast"] is not None for c in cells)
+    assert (cells[3]["lat"], cells[3]["lng"]) == (18.79, 98.98)
     assert body["data"]["warnings"] == ["WEATHER_UNAVAILABLE"]
 
 

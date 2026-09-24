@@ -47,7 +47,11 @@ def area(lat: float, lng: float):
     now = datetime.now(timezone.utc)
     grid = weather.area_grid(lat, lng)
     forecasts, warnings = weather.forecast_points([(g_lat, g_lng, now) for g_lat, g_lng in grid])
-    cells = [{"lat": g_lat, "lng": g_lng, "forecast": fc} for (g_lat, g_lng), fc in zip(grid, forecasts)]
+    # the web reads cell.forecast directly, so cells without data are left out
+    cells = [
+        {"lat": g_lat, "lng": g_lng, "forecast": fc}
+        for (g_lat, g_lng), fc in zip(grid, forecasts) if fc is not None
+    ]
     return ok({"center": {"lat": lat, "lng": lng}, "cells": cells, "updated_at": to_iso(now), "warnings": warnings})
 
 
