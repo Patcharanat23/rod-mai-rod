@@ -12,6 +12,7 @@ import { riskColor } from "@/shared/risk";
 import { formatDuration, formatThaiTime } from "@/shared/time";
 import { useApi } from "@/shared/useApi";
 import type { PlanWaypoint, Trip, TripPlan } from "@/shared/types";
+import RouteEmergency from "./RouteEmergency";
 import TripForm from "./TripForm";
 
 export default function MyTripPage() {
@@ -107,10 +108,10 @@ export default function MyTripPage() {
                   <RiskBadge level={trip.plan.risk_level} score={trip.plan.risk_score} />
                 </p>
                 <p>{trip.plan.summary_th}</p>
+                <RouteEmergency plan={trip.plan} />
                 <WaypointList waypoints={trip.plan.waypoints} />
               </>
             )}
-            {/* TODO(web-mytrip): เส้นทางเป็น HIGH ให้แสดง <EmergencyCard hazardType=... /> จาก shared ตามภัยที่เจอ */}
             {/* TODO(web-mytrip): แก้ทริป (PATCH) และลบทริป (DELETE) */}
           </div>
         </div>
