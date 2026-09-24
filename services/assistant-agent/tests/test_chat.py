@@ -37,6 +37,15 @@ def test_no_llm_still_answers_safety_from_documents(monkeypatch):
     assert "อย่าขับผ่านน้ำ" in data["reply"] and "ปภ." in data["reply"]
 
 
+def test_document_reply_has_no_double_bullets_and_names_each_source_once():
+    rows = [dict(SNIPPET, snippet_th="- ห้ามสตาร์ทรถซ้ำ"), dict(SNIPPET, snippet_th="- ย้ายไปที่สูง"),
+            dict(SNIPPET, snippet_th="จอดรถที่โล่ง", source="กรมทรัพยากรธรณี")]
+    reply = llm.document_reply(rows)
+    assert "- -" not in reply and "- ห้ามสตาร์ทรถซ้ำ\n- ย้ายไปที่สูง" in reply
+    assert reply.count("ปภ.") == 1 and reply.count("กรมทรัพยากรธรณี") == 1
+    assert "- - " not in llm.build_messages("น้ำท่วม", [], rows)[1]["content"]
+
+
 def test_primary_down_falls_back(monkeypatch):
     monkeypatch.setenv("LLM_PRIMARY", "groq")
     monkeypatch.setenv("LLM_FALLBACK", "gemini")
