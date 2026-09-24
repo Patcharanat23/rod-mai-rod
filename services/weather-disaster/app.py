@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+import weather
 from envelope import ApiError, ok, setup
 from geo import to_iso
 
@@ -36,12 +37,12 @@ def sample_forecast(time_iso: str) -> dict:
 
 @app.post("/api/v1/forecast/points")
 def forecast_points(body: PointsIn):
-    out = []
     for p in body.points:
         if p.time.tzinfo is None:
             raise ApiError("VALIDATION_ERROR", "time ต้องมี timezone")
-        out.append({"lat": p.lat, "lng": p.lng, "forecast": sample_forecast(to_iso(p.time))})
-    return ok({"points": out, "warnings": []})
+    forecasts, warnings = weather.forecast_points([(p.lat, p.lng, p.time) for p in body.points])
+    out = [{"lat": p.lat, "lng": p.lng, "forecast": fc} for p, fc in zip(body.points, forecasts)]
+    return ok({"points": out, "warnings": warnings})
 
 
 @app.get("/api/v1/area")
