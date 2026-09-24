@@ -78,7 +78,7 @@ def test_fake_token_is_unauthorized(client):
     res = client.get("/api/v1/me", headers={"Authorization": "Bearer dev-token"})
     assert res.status_code == 401
     assert res.json()["error"]["code"] == "UNAUTHORIZED"
-    
+
 
 # ---------- trips ----------
 
@@ -138,4 +138,3 @@ def test_patch_after_plan_is_stale(client, auth_header, monkeypatch):
     assert client.get(f"/api/v1/trips/{trip_id}", headers=auth_header).json()["data"]["plan_status"] == "FRESH"
     res = client.patch(f"/api/v1/trips/{trip_id}", headers=auth_header, json={"departure_time": "2030-01-02T06:00:00Z"})
     assert res.json()["data"]["plan_status"] == "STALE"
-    

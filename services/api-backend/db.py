@@ -3,8 +3,8 @@ import os
 from typing import Optional
 
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool, PoolTimeout
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from geo import to_iso
 
