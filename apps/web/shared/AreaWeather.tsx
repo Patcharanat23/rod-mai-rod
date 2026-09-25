@@ -6,7 +6,7 @@ import Warnings from "./Warnings";
 import { formatThaiTime } from "./time";
 import { useApi } from "./useApi";
 import { BANGKOK, inThailand, useLocation } from "./useLocation";
-import type { AreaWeather as Area } from "./types";
+import type { AreaWeather as Area, NearbyPlace } from "./types";
 
 // แผนที่ + สภาพอากาศแบบ area รอบตำแหน่งผู้ใช้ ใช้ตอนผู้ใช้ยังไม่มีทริป (Overview และ My Trip)
 export default function AreaWeather() {
@@ -15,6 +15,9 @@ export default function AreaWeather() {
   const abroad = located !== null && !inThailand(located);
   const pos = abroad ? BANGKOK : located;
   const { data, error, loading, reload } = useApi<Area>(pos ? `/weather/area?lat=${pos.lat}&lng=${pos.lng}` : null);
+  // สถานที่เที่ยวใกล้ตัว ดึงไม่ได้ก็ไม่เป็นไร การ์ดอากาศยังต้องแสดงต่อ (CONTRACT หัวข้อ 6)
+  const nearby = useApi<{ places: NearbyPlace[] }>(pos ? `/places/nearby?lat=${pos.lat}&lng=${pos.lng}` : null);
+  const places = nearby.data?.places ?? [];
 
   return (
     <div className="card">
@@ -30,7 +33,23 @@ export default function AreaWeather() {
             center={pos}
             zoom={9}
             // cell ที่ไม่มีพยากรณ์ไม่ต้องวาด แถบ Warnings บอกผู้ใช้แล้ว
-            markers={(data?.cells ?? []).flatMap((c) => (c.forecast ? [{ ...c, forecast: c.forecast }] : [])).map((c, i) => ({
+            markers={[
+              ...places.map((pl, i) => ({
+                id: `place-${i}`,
+                lat: pl.lat,
+                lng: pl.lng,
+                label: String(i + 1), // เลขตรงกับรายการใต้แผนที่ หมุดที่อยู่ใกล้กันซ้อนกันได้
+                color: "#f59e0b",
+                popup: (
+                  <div>
+                    <strong>{pl.name}</strong>
+                    <br />
+                    {pl.kind_th}
+                    {pl.detail ? ` · ${pl.detail}` : ""}
+                  </div>
+                ),
+              })),
+              ...(data?.cells ?? []).flatMap((c) => (c.forecast ? [{ ...c, forecast: c.forecast }] : [])).map((c, i) => ({
               id: String(i),
               lat: c.lat,
               lng: c.lng,
@@ -42,9 +61,23 @@ export default function AreaWeather() {
                   ฝน {c.forecast.rain_mm_per_h} มม./ชม. · ลม {c.forecast.wind_kmh} กม./ชม. · {c.forecast.temp_c}°C
                 </div>
               ),
-            }))}
+            })),
+            ]}
           />
           <p className="muted">อัปเดต {formatThaiTime(data?.updated_at)}</p>
+          {places.length > 0 && (
+            <>
+              <h4 style={{ margin: "12px 0 6px" }}>สถานที่เที่ยวใกล้คุณ</h4>
+              <div className="row" style={{ gap: 6 }}>
+                {places.map((pl, i) => (
+                  <span key={i} className="btn btn-outline" style={{ padding: "4px 10px", fontSize: 13, cursor: "default" }}>
+                    {i + 1}. {pl.name} <span className="muted">· {pl.kind_th}</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+          {nearby.error && <p className="muted">ยังดึงสถานที่เที่ยวใกล้ๆ ไม่ได้ตอนนี้</p>}
         </>
       )}
     </div>
