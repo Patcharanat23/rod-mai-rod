@@ -91,6 +91,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | api-backend ไป routing-engine | 45 วินาที |
 | api-backend ไป weather-disaster | 10 วินาที |
 | api-backend ไป บริการค้นสถานที่ (Photon) | 5 วินาที |
+| api-backend ไป Overpass (สถานที่เที่ยวใกล้ตัว) | 8 วินาที |
 | routing-engine ไป risk-decision | 30 วินาที |
 | risk-decision ไป weather-disaster | 10 วินาทีต่อครั้ง |
 | weather-disaster ไป API ภายนอก | 8 วินาทีต่อครั้ง ยิงหลายแหล่งพร้อมกัน ไม่ใช่ทีละแหล่ง |
@@ -190,6 +191,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | POST | `/api/v1/assistant/chat` | `{message, history[]}` ได้ `ChatReply` |
 | GET | `/api/v1/safety/emergency?hazard_type=` | คำแนะนำฉุกเฉินของภัยชนิดนั้น ได้ `Emergency` (แสดงเมื่อเส้นทางหรือหมุดภัยเป็น HIGH) |
 | GET | `/api/v1/places/search?q=` | ค้นสถานที่ในไทยจากชื่อที่พิมพ์ (ช่องปักหมุดในฟอร์มทริป) ได้ `{"places": [Place...]}` ไม่เกิน 5 ตัว (รูปแบบด้านล่าง) |
+| GET | `/api/v1/places/nearby?lat=&lng=` | สถานที่เที่ยวใกล้ตำแหน่งผู้ใช้ในรัศมี 5 กม. (หน้า Overview ตอนไม่มีทริป) ได้ `{"places": [NearbyPlace...]}` ไม่เกิน 8 ตัว เรียงจากใกล้ไปไกล |
 
 ### routing-engine
 
@@ -294,6 +296,16 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 - คำย่อที่คนไทยพิมพ์บ่อยต้องเจอ เช่น `กทม` > กรุงเทพมหานคร, `โคราช` > นครราชสีมา
 - บริการค้นสถานที่ล่มหรือช้าได้ `UPSTREAM_ERROR` / `UPSTREAM_TIMEOUT` หน้าเว็บบอกผู้ใช้ให้ปักหมุดบนแผนที่แทน ห้ามค้าง
 - ใช้ Photon (`photon.komoot.io`) ซึ่งอนุญาตให้ค้นแบบพิมพ์ไปเจอไป ห้ามใช้ Nominatim ทำแบบนี้ (ผิดเงื่อนไขการใช้งานของเขา)
+
+`NearbyPlace` (คำตอบของ `GET /places/nearby`) = `Place` + `kind_th`
+
+```json
+{ "places": [ { "name": "ประตูท่าแพ", "detail": null, "lat": 18.7877, "lng": 98.9933, "kind_th": "สถานที่ท่องเที่ยว" } ] }
+```
+
+- ดึงจาก Overpass (OpenStreetMap) ครั้งเดียวต่อคำขอ: `tourism` = attraction / viewpoint / museum / zoo / theme_park และ `historic` = monument / temple / ruins ที่มีชื่อ ใช้ `name:th` ถ้ามี
+- **ประหยัดโควตา**: รัศมี 5 กม. ไม่เกิน 8 ตัว cache ตามพิกัดที่ปัดเป็นทศนิยม 2 ตำแหน่ง (ประมาณ 1 กม.) นาน 24 ชม. ไม่เรียก LLM
+- นอกประเทศไทยได้ `OUT_OF_THAILAND` · Overpass ล่มหรือช้าได้ `UPSTREAM_ERROR` / `UPSTREAM_TIMEOUT` หน้าเว็บแสดงแผนที่และอากาศต่อไปโดยไม่มีหมุดสถานที่ ห้ามทำให้ทั้งการ์ดพัง
 
 คำตอบของ `GET /weather/area` และ `GET /area`
 
