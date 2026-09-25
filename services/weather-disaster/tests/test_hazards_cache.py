@@ -17,7 +17,7 @@ def pin(hid, lat, lng, source):
 @pytest.fixture
 def sources(monkeypatch):
     """Counts calls per source; a source listed in state["down"] raises."""
-    state = {"calls": {"gdacs": 0, "usgs": 0, "landslide": 0}, "down": set(), "boxes": []}
+    state = {"calls": {"gdacs": 0, "usgs": 0, "landslide": 0, "weather": 0}, "down": set(), "boxes": []}
 
     def make(name, pins):
         def fn(box):
@@ -31,6 +31,7 @@ def sources(monkeypatch):
     monkeypatch.setattr(hazard_feeds, "fetch_gdacs", make("gdacs", [pin("gdacs-1", 15.7, 100.13, "GDACS")]))
     monkeypatch.setattr(hazard_feeds, "fetch_usgs", make("usgs", [pin("usgs-1", 19.9, 99.8, "USGS")]))
     monkeypatch.setattr(hazard_feeds, "derived_landslide", make("landslide", [pin("ls-1", 14.74, 98.63, "DERIVED")]))
+    monkeypatch.setattr(hazard_feeds, "current_weather", make("weather", [pin("wx-1", 13.8, 100.5, "OPEN_METEO")]))
     return state
 
 
@@ -46,15 +47,15 @@ def test_second_request_is_served_from_cache(sources):
     first = get(THAILAND)
     second = get(THAILAND)
     assert first == second
-    assert ids(first) == ["gdacs-1", "ls-1", "usgs-1"]
-    assert sources["calls"] == {"gdacs": 1, "usgs": 1, "landslide": 1}
+    assert ids(first) == ["gdacs-1", "ls-1", "usgs-1", "wx-1"]
+    assert sources["calls"] == {"gdacs": 1, "usgs": 1, "landslide": 1, "weather": 1}
 
 
 def test_other_box_uses_the_same_cache_and_is_filtered(sources):
     get(THAILAND)
     data = get(NAKHON_SAWAN)
     assert ids(data) == ["gdacs-1"]
-    assert sources["calls"] == {"gdacs": 1, "usgs": 1, "landslide": 1}
+    assert sources["calls"] == {"gdacs": 1, "usgs": 1, "landslide": 1, "weather": 1}
 
 
 def test_sources_are_fetched_for_the_whole_area(sources):
@@ -77,15 +78,15 @@ def test_cache_expires_after_10_minutes(sources, monkeypatch):
 def test_failed_source_is_not_cached_as_empty(sources):
     sources["down"].add("gdacs")
     data = get(THAILAND)
-    assert ids(data) == ["ls-1", "usgs-1"]
+    assert ids(data) == ["ls-1", "usgs-1", "wx-1"]
     assert data["warnings"] == ["HAZARD_FEED_UNAVAILABLE"]
 
     sources["down"].clear()
     data = get(THAILAND)
-    assert ids(data) == ["gdacs-1", "ls-1", "usgs-1"]
+    assert ids(data) == ["gdacs-1", "ls-1", "usgs-1", "wx-1"]
     assert data["warnings"] == []
     # only the failed source was asked again
-    assert sources["calls"] == {"gdacs": 2, "usgs": 1, "landslide": 1}
+    assert sources["calls"] == {"gdacs": 2, "usgs": 1, "landslide": 1, "weather": 1}
 
 
 def test_demo_and_live_results_are_not_mixed(sources, monkeypatch):
@@ -95,3 +96,16 @@ def test_demo_and_live_results_are_not_mixed(sources, monkeypatch):
     monkeypatch.setattr(hazard_feeds, "demo_usgs", lambda box: [])
     get(THAILAND)
     assert sources["calls"]["landslide"] == 2
+
+
+def test_refresh_fetches_again_even_when_cached(sources):
+    hazard_feeds.get_hazards(hazard_feeds.ALL_BOX)
+    hazard_feeds.get_hazards(hazard_feeds.ALL_BOX, refresh=True)
+    assert sources["calls"] == {"gdacs": 2, "usgs": 2, "landslide": 2, "weather": 2}
+    # a normal request right after the refresh is served from the cache
+    get(THAILAND)
+    assert sources["calls"]["gdacs"] == 2
+
+
+def test_refresh_runs_before_the_cache_expires():
+    assert hazard_feeds.REFRESH_EVERY_S < hazard_feeds.CACHE_TTL_S

@@ -1,8 +1,8 @@
 """Record real responses for DEMO_MODE. Needs internet.
 
 Reads the demo routes saved by routing-engine, then stores the Open-Meteo forecast for
-points every STEP_KM along every route, the 3x3 area around each demo city and the hill
-points used for landslide estimates, plus the current GDACS and USGS feeds, all under
+points every STEP_KM along every route, the 3x3 area around each demo city, the hill
+points used for landslide estimates and the land grid for rain and wind pins, plus the current GDACS and USGS feeds, all under
 fixtures/.
 """
 import json
@@ -14,6 +14,7 @@ import httpx
 import hazard_feeds
 import landslide
 import weather
+import weather_pins
 from geo import haversine_km, to_iso
 
 HERE = Path(__file__).resolve().parent
@@ -83,6 +84,7 @@ def demo_keys() -> list[tuple[float, float]]:
     for lat, lng in CITIES:
         points.extend(weather.area_grid(lat, lng))
     points.extend((lat, lng) for _, lat, lng, _ in landslide.HILL_POINTS)
+    points.extend(weather_pins.GRID)
     return list(dict.fromkeys(weather.cache_key(lat, lng) for lat, lng in points))
 
 
