@@ -55,10 +55,32 @@ WMO_TH = {
 UNKNOWN_TH = "ไม่ทราบสภาพอากาศ"
 
 
-def condition_th(code) -> str:
+RAIN_CODES = set(range(51, 68)) | {80, 81, 82}
+THUNDER_CODES = set(range(95, 100))
+
+
+def rain_words(rain: float) -> str:
+    """Wording that matches the CONTRACT rain levels (LOW < 10, MEDIUM 10-35, HIGH > 35)."""
+    if rain < 2.5:
+        return "ฝนเล็กน้อย"
+    if rain < 10:
+        return "ฝนปานกลาง"
+    if rain <= 35:
+        return "ฝนหนัก"
+    return "ฝนหนักมาก"
+
+
+def condition_th(code, rain: float | None = None) -> str:
+    """Short Thai wording. For rain and thunder the amount decides the words, not the code,
+    so the text never says heavy or storm next to a low rain number."""
     if code is None:
         return UNKNOWN_TH
-    return WMO_TH.get(int(code), UNKNOWN_TH)
+    code = int(code)
+    if rain is not None and code in RAIN_CODES:
+        return rain_words(rain)
+    if rain is not None and code in THUNDER_CODES:
+        return "ฝนฟ้าคะนอง" if rain < 10 else "พายุฝนฟ้าคะนอง"
+    return WMO_TH.get(code, UNKNOWN_TH)
 
 
 def hour_key(t: datetime) -> str:
@@ -108,7 +130,7 @@ def pick_hour(hourly: dict, t: datetime) -> tuple[dict | None, str | None]:
         "rain_mm_per_h": round(float(rain), 1),
         "wind_kmh": round(float(wind), 1),
         "temp_c": round(float(temp), 1),
-        "condition_th": condition_th(code),
+        "condition_th": condition_th(code, round(float(rain), 1)),
     }
     return forecast, None
 

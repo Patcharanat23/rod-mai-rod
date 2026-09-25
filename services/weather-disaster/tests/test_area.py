@@ -84,7 +84,7 @@ def test_values_are_for_the_current_hour(open_meteo):
     expected_hour = updated.strftime("%Y-%m-%dT%H:00:00Z")
     for cell in data["cells"]:
         assert cell["forecast"]["time"] == expected_hour
-        assert cell["forecast"]["condition_th"] == "ฝนตกเล็กน้อย"
+        assert cell["forecast"]["condition_th"] == weather.condition_th(61, cell["forecast"]["rain_mm_per_h"])
     assert data["warnings"] == []
     assert data["center"] == {"lat": 18.79, "lng": 98.98}
 
