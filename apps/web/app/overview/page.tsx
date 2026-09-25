@@ -12,8 +12,24 @@ import { formatDuration, formatThaiTime } from "@/shared/time";
 import { useApi } from "@/shared/useApi";
 import type { HazardType, RiskLevel, Trip, TripPlan } from "@/shared/types";
 
+// ทริปที่ยังไม่ได้แพลนไม่รู้เวลาถึง ถือว่ายังเดินทางอยู่ไม่เกินเท่านี้หลังเวลาออก
+const UNPLANNED_TRIP_HOURS = 6;
+
+// ทริปที่ใกล้ตัวที่สุดตามเวลา: กำลังเดินทางอยู่ (ออกแล้วแต่ยังไม่ถึง) ก่อน ถ้าไม่มีเอาทริปที่จะออกเร็วที่สุด
+// ไม่ใช้เลขทริป ทริปที่สร้างทีหลังอาจออกก่อน
+function pickTrip(trips: Trip[], now: number): { trip: Trip; ongoing: boolean } | null {
+  const start = (t: Trip) => Date.parse(t.departure_time);
+  const end = (t: Trip) =>
+    t.plan?.arrival_time ? Date.parse(t.plan.arrival_time) : start(t) + UNPLANNED_TRIP_HOURS * 3600_000;
+  const ongoing = trips.filter((t) => start(t) <= now && now < end(t)).sort((a, b) => start(b) - start(a));
+  if (ongoing.length) return { trip: ongoing[0], ongoing: true };
+  const next = trips.filter((t) => start(t) > now).sort((a, b) => start(a) - start(b));
+  return next.length ? { trip: next[0], ongoing: false } : null;
+}
+
 export default function OverviewPage() {
-  const { data: trip, error, loading, reload } = useApi<Trip | null>("/trips/upcoming");
+  const { data: trips, error, loading, reload } = useApi<Trip[]>("/trips");
+  const picked = trips ? pickTrip(trips, Date.now()) : null;
 
   return (
     <>
@@ -24,8 +40,8 @@ export default function OverviewPage() {
       </div>
       {loading || error ? (
         <StatusBox loading={loading} error={error} onRetry={reload} />
-      ) : trip ? (
-        <UpcomingTrip trip={trip} />
+      ) : picked ? (
+        <UpcomingTrip trip={picked.trip} ongoing={picked.ongoing} />
       ) : (
         <AreaWeather />
       )}
@@ -42,7 +58,7 @@ function mainHazard(plan: TripPlan): HazardType | null {
   return null;
 }
 
-function UpcomingTrip({ trip }: { trip: Trip }) {
+function UpcomingTrip({ trip, ongoing }: { trip: Trip; ongoing: boolean }) {
   const plan = trip.plan;
   const best = plan?.route_options.find((r) => r.is_recommended);
   const stops: { waypoint_id: string; lat: number; lng: number; name: string; risk_level?: RiskLevel | null }[] = plan
@@ -52,7 +68,9 @@ function UpcomingTrip({ trip }: { trip: Trip }) {
   return (
     <div className="grid">
       <div className="card">
-        <h3>ทริปถัดไป: Trip {String(trip.trip_no).padStart(2, "0")}</h3>
+        <h3>
+          {ongoing ? "กำลังเดินทาง" : "ทริปถัดไป"}: Trip {String(trip.trip_no).padStart(2, "0")}
+        </h3>
         {trip.plan_status === "STALE" && (
           <div className="warnings">
             ทริปถูกแก้หลังวางแผน ข้อมูลอาจไม่ตรง <Link href="/my-trip">วางแผนใหม่</Link>
