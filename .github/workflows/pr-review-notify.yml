@@ -44,8 +44,8 @@ jobs:
           fi
 
           case "$REVIEW_STATE" in
-            approved) STATUS_TH="ผ่านแล้ว พร้อม merge" ;;
-            changes_requested) STATUS_TH="ต้องแก้ไขก่อน" ;;
+            approved) STATUS_TH="✅ ผ่านแล้ว พร้อม merge" ;;
+            changes_requested) STATUS_TH="❌ ต้องแก้ไขก่อน" ;;
             commented) STATUS_TH="มีคอมเมนต์จากรีวิว" ;;
             *) STATUS_TH="อัปเดตสถานะรีวิว" ;;
           esac
