@@ -8,6 +8,10 @@ summary_th บอกสาเหตุ ระยะทางจากจุด�
 DELAY (เลื่อนออก +3/+6 ชม. เช็คเส้นหลักอย่างเดียว) ก็ทำแล้วเช่นกัน (7.4 เสริม)
 แก้แล้วตามรีวิว PR #40 รอบ 1: จุดไม่มีข้อมูลตอนเลื่อนเวลาไม่ถูกนับเป็นปลอดภัยอีกต่อไป และ
 warning ของจุดเลื่อนเวลาไม่รั่วไปปนกับจุดจริงแล้ว
+แก้แล้วตามทดสอบรวม 2026-09-25: FORECAST_OUT_OF_RANGE ของจุดเลื่อนเวลาไม่รั่วเข้าจุดจริงแล้ว (เหมือน
+WEATHER_UNAVAILABLE) และ summary_th ไม่บอกว่า "ตลอดเส้นทางปกติ" ถ้ามีบางจุดยังไม่มีข้อมูล (7.5)
+หมุดฝน/ลม ณ ชั่วโมงนี้ (source: OPEN_METEO จาก weather-disaster งาน 6.7) ไม่ถูกนับ กันนับซ้ำกับ
+พยากรณ์ ณ เวลาไปถึงที่ใช้อยู่แล้ว
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -28,6 +32,9 @@ RAIN_MEDIUM, RAIN_HIGH_ABOVE = 10.0, 35.0
 WIND_MEDIUM, WIND_HIGH_ABOVE = 40.0, 61.0
 MAX_SLOWER_RATIO = 1.5
 HAZARD_RADIUS_KM = 20.0
+# หมุดฝน/ลม ณ ชั่วโมงนี้ที่ weather-disaster เพิ่มใน 6.7 ข้ามไปตอนคิดความเสี่ยง (CONTRACT หัวข้อ 6):
+# เราคิดความเสี่ยงจากพยากรณ์ ณ เวลาที่ไปถึงอยู่แล้ว นับหมุดนี้ซ้ำจะได้ความเสี่ยงของตอนนี้แทน
+SKIP_HAZARD_SOURCE = "OPEN_METEO"
 # ระยะ padding ของกรอบพิกัดตอนขอหมุดภัย กันหมุดใกล้ขอบรัศมีหลุดกรอบ (1 องศา ~ 111 กม.)
 _BBOX_PAD_DEG = HAZARD_RADIUS_KM / 111.0
 SCORE_RANGE = {"LOW": (0, 33), "MEDIUM": (34, 66), "HIGH": (67, 100)}
@@ -183,6 +190,17 @@ def _worst_point_and_distance(route: dict) -> tuple[Optional[dict], float]:
     return point, distance
 
 
+def _first_missing_point_and_distance(route: dict) -> tuple[Optional[dict], float]:
+    """จุดแรกที่ไม่มีข้อมูล (risk_level เป็น None) บนเส้นทาง พร้อมระยะสะสมจากจุดเริ่มต้นถึงจุดนั้น (กม.)
+    ไม่พบจุดแบบนี้เลยคืน (None, 0.0)"""
+    points = route["points"]
+    for idx, p in enumerate(points):
+        if p["risk_level"] is None:
+            distance = sum(haversine_km(points[j], points[j + 1]) for j in range(idx))
+            return p, distance
+    return None, 0.0
+
+
 def _thai_time_th(iso_z: str) -> str:
     """เวลาไทย (UTC+7) จาก ISO UTC string เช่น '2026-09-24T03:00:00Z' -> '10:00 น.'"""
     dt = datetime.strptime(iso_z, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -204,14 +222,23 @@ def _risk_cause_th(point: dict) -> str:
     return "และ".join(causes) if causes else "สภาพอากาศแปรปรวน"
 
 
-def summary_text(main: dict, recommended: dict, recommendation: str, delay_hours: Optional[int] = None) -> str:
+def summary_text(main: dict, recommended: dict, recommendation: str, delay_hours: Optional[int] = None,
+                  out_of_range: bool = False) -> str:
     """สรุปเป็นภาษาไทยว่าเสี่ยงเพราะอะไร ตรงไหน กี่โมง และควรทำอะไร (README ข้อ 9 ต้องไม่ว่างเปล่า)
-    delay_hours: จำนวนชั่วโมงที่แนะนำให้เลื่อน ใช้เมื่อ recommendation == "DELAY" เท่านั้น"""
+    delay_hours: จำนวนชั่วโมงที่แนะนำให้เลื่อน ใช้เมื่อ recommendation == "DELAY" เท่านั้น
+    out_of_range: True เมื่อจุดจริงที่ไม่มีพยากรณ์เกิดจากวันเดินทางเกินช่วงพยากรณ์ (ไม่ใช่ weather-disaster ล่ม)
+    ใช้เลือกคำตอนไม่มีข้อมูลเลยทั้งเส้น ห้ามถือว่าไม่มีข้อมูลเท่ากับปลอดภัย (CONTRACT หัวข้อ 3)"""
     level = main["risk_level"]
     if level is None:
+        if out_of_range:
+            return "วันเดินทางไกลเกินช่วงพยากรณ์ ยังไม่มีข้อมูลสภาพอากาศให้ประเมิน"
         return "ตอนนี้ประเมินความเสี่ยงไม่ได้ ข้อมูลสภาพอากาศไม่พร้อม"
     if level == "LOW":
-        return "สภาพอากาศตลอดเส้นทางปกติ เดินทางได้ตามปกติ"
+        missing, missing_km = _first_missing_point_and_distance(main)
+        if missing is None:
+            return "สภาพอากาศตลอดเส้นทางปกติ เดินทางได้ตามปกติ"
+        return (f"ช่วงที่มีข้อมูลสภาพอากาศปกติ แต่ตั้งแต่ช่วงประมาณ {round(missing_km)} กม. จากจุดเริ่มต้น "
+                "ยังไม่มีข้อมูลสภาพอากาศ ควรเช็คอากาศอีกครั้งใกล้วันเดินทาง")
 
     point, distance_km = _worst_point_and_distance(main)
     where = f"ช่วงประมาณ {round(distance_km)} กม. จากจุดเริ่มต้น" if point else "บางช่วงของเส้นทาง"
@@ -283,11 +310,12 @@ def evaluate(body: EvaluateIn):
     combined = flat + [pt for hours in DELAY_OFFSET_HOURS for pt in delayed_flat[hours]]
 
     all_forecasts, forecast_warnings = fetch_forecasts(combined)
-    # คำขอนี้มีจุดเลื่อนเวลาของ DELAY ปนอยู่กับจุดจริง (ผสมไว้เองด้านบน) เลยไม่รู้ว่า
-    # WEATHER_UNAVAILABLE ที่ weather-disaster ตอบมาเป็นของจุดจริงหรือจุดสมมติ ตัดออกแล้วปล่อยให้
-    # เช็ค risk_level ของจุดจริงด้านล่างเป็นคนใส่ warning นี้เองแทน (scope เฉพาะจุดจริงจริงๆ)
-    warnings = [w for w in forecast_warnings if w != "WEATHER_UNAVAILABLE"]
+    # คำขอนี้มีจุดเลื่อนเวลาของ DELAY ปนอยู่กับจุดจริง (ผสมไว้เองด้านบน) เลยไม่รู้ว่า WEATHER_UNAVAILABLE
+    # หรือ FORECAST_OUT_OF_RANGE ที่ weather-disaster ตอบมาเป็นของจุดจริงหรือจุดสมมติ ตัดทั้งคู่ออกแล้ว
+    # ปล่อยให้เช็ค risk_level ของจุดจริงด้านล่างเป็นคนใส่ warning พวกนี้เองแทน (scope เฉพาะจุดจริงจริงๆ)
+    warnings = [w for w in forecast_warnings if w not in ("WEATHER_UNAVAILABLE", "FORECAST_OUT_OF_RANGE")]
     hazards, hazard_warnings = fetch_hazards(flat)  # ตำแหน่งเดิม เวลาเลื่อนไม่กระทบกรอบพิกัด
+    hazards = [h for h in hazards if h.get("source") != SKIP_HAZARD_SOURCE]  # 7.5: ไม่นับหมุด ณ ชั่วโมงนี้
     warnings = warnings + hazard_warnings
 
     forecasts = all_forecasts[:len(flat)]
@@ -311,6 +339,11 @@ def evaluate(body: EvaluateIn):
             i += 1
         if any(p["risk_level"] is None for p in points):
             warnings.append("WEATHER_UNAVAILABLE")
+            # ใส่กลับเฉพาะตอนที่ weather-disaster เคยส่งสัญญาณนี้มาจริงในคำขอ (อาจมาจากจุดเลื่อนเวลา
+            # ก็ได้ แต่จุดจริงก็ขาดพยากรณ์ด้วยพอดี) กัน false FORECAST_OUT_OF_RANGE ตอน weather-disaster
+            # ล่มไปเลย ซึ่งไม่เกี่ยวอะไรกับวันเดินทางเกินช่วงพยากรณ์
+            if "FORECAST_OUT_OF_RANGE" in forecast_warnings:
+                warnings.append("FORECAST_OUT_OF_RANGE")
         scores = [p["risk_score"] for p in points if p["risk_score"] is not None]
         results.append({"route_id": route.route_id, "duration_min": route.duration_min,
                         "risk_level": worst([p["risk_level"] for p in points]),
@@ -322,7 +355,8 @@ def evaluate(body: EvaluateIn):
     recommended_id, recommendation = decide(results, delay_levels)
     recommended = next(r for r in results if r["route_id"] == recommended_id)
     delay_hours = best_delay_hours(results[0]["risk_level"], delay_levels) if recommendation == "DELAY" else None
-    summary = summary_text(results[0], recommended, recommendation, delay_hours)
+    summary = summary_text(results[0], recommended, recommendation, delay_hours,
+                            "FORECAST_OUT_OF_RANGE" in warnings)
     for r in results:
         r.pop("duration_min")
     return ok({
