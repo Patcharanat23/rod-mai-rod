@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -139,34 +138,14 @@ def score(query: str, line: str) -> float:
     return float(len(query_grams.intersection(line_grams)))
 
 
-def search_with_embeddings_fallback(query: str, wanted: set[str], limit: int) -> Optional[list[dict]]:
-    """พยายามค้นหาด้วย Embeddings/Semantic Search หากไม่พร้อมใช้งานจะคืนค่า None เพื่อ Fallback"""
-    enable_embeddings = os.getenv("ENABLE_EMBEDDINGS", "false").lower() == "true"
-    if not enable_embeddings:
-        return None
-
-    try:
-        # สงวนโครงสร้างรองรับ Semantic Model หรือ Vector Search แบบ Offline
-        # หากไม่มี Key หรือเกิด Exception จะถูกส่งไปยัง Trigram Fallback ทันที
-        return None
-    except Exception:
-        return None
-
-
 @app.post("/api/v1/safety/search")
 def search(body: SearchIn):
     if not body.query.strip():
         raise ApiError("VALIDATION_ERROR", "ข้อความค้นหาว่าง")
 
     wanted = set(body.hazard_types)
-
-    # ลองใช้งาน Embeddings หากเปิดใช้งานและพร้อมทำงาน
-    emb_results = search_with_embeddings_fallback(body.query, wanted, body.limit)
-    if emb_results is not None:
-        return ok({"results": emb_results, "warnings": []})
-
-    # --- Trigram Search Logic (พร้อมการคิดคะแนน title_th และ Filter) ---
     query_grams = get_trigrams(body.query)
+
     min_match_threshold = min(3, len(query_grams) // 2) if len(query_grams) >= 2 else 1
 
     hits = []
@@ -181,7 +160,6 @@ def search(body: SearchIn):
             s = score(body.query, line)
             max_s = max(s, title_s)
 
-            # กรองคำที่ไม่เกี่ยวข้องออกด้วย min_match_threshold
             if max_s >= min_match_threshold and max_s > 0:
                 score_weight = max_s + (1.0 if wanted else 0.0)
                 hits.append((
@@ -196,7 +174,6 @@ def search(body: SearchIn):
 
     hits.sort(key=lambda h: -h[0])
 
-    # ป้องกันผลลัพธ์ซ้ำซ้อนและจำกัดตามจำนวน limit
     unique_results = []
     seen = set()
     for _, item in hits:
