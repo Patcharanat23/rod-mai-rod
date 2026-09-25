@@ -37,6 +37,23 @@ def test_no_llm_still_answers_safety_from_documents(monkeypatch):
     assert "อย่าขับผ่านน้ำ" in data["reply"] and "ปภ." in data["reply"]
 
 
+def test_no_llm_trip_command_lists_commands_not_documents(monkeypatch):
+    no_llm(monkeypatch)
+    monkeypatch.setattr(agent, "safety_search", lambda q: [SNIPPET])
+    data = client.post("/api/v1/chat", headers=AUTH, json={"message": "ทริป 1 ออกเร็วขึ้น 1 ชั่วโมง"}).json()["data"]
+    assert data["warnings"] == ["LLM_UNAVAILABLE"] and data["actions"] == []
+    assert "เลื่อน Trip 01" in data["reply"] and "อย่าขับผ่านน้ำ" not in data["reply"]
+
+
+def test_document_reply_has_no_double_bullets_and_names_each_source_once():
+    rows = [dict(SNIPPET, snippet_th="- ห้ามสตาร์ทรถซ้ำ"), dict(SNIPPET, snippet_th="- ย้ายไปที่สูง"),
+            dict(SNIPPET, snippet_th="จอดรถที่โล่ง", source="กรมทรัพยากรธรณี")]
+    reply = llm.document_reply(rows)
+    assert "- -" not in reply and "- ห้ามสตาร์ทรถซ้ำ\n- ย้ายไปที่สูง" in reply
+    assert reply.count("ปภ.") == 1 and reply.count("กรมทรัพยากรธรณี") == 1
+    assert "- - " not in llm.build_messages("น้ำท่วม", [], rows)[1]["content"]
+
+
 def test_primary_down_falls_back(monkeypatch):
     monkeypatch.setenv("LLM_PRIMARY", "groq")
     monkeypatch.setenv("LLM_FALLBACK", "gemini")
@@ -71,3 +88,8 @@ def test_history_is_trimmed_and_sources_are_given_to_model():
     assert sum(m["role"] == "user" for m in msgs) <= llm.HISTORY_LIMIT + 1
     assert all(m["content"] != "แอบสั่ง" for m in msgs)  # ไม่รับ system จาก history ของผู้ใช้
     assert "ปภ." in msgs[1]["content"]
+
+
+def test_plain_removes_markdown_the_chat_cannot_show():
+    assert llm.plain("## หัวข้อ\n**Trip 01** ใช้ `Plan`") == "หัวข้อ\nTrip 01 ใช้ Plan"
+    assert llm.plain("- ข้อหนึ่ง\n- ข้อสอง") == "- ข้อหนึ่ง\n- ข้อสอง"

@@ -90,6 +90,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | web ไป api-backend (`/assistant/chat` เท่านั้น) | 120 วินาที |
 | api-backend ไป routing-engine | 45 วินาที |
 | api-backend ไป weather-disaster | 10 วินาที |
+| api-backend ไป บริการค้นสถานที่ (Photon) | 5 วินาที |
 | routing-engine ไป risk-decision | 30 วินาที |
 | risk-decision ไป weather-disaster | 10 วินาทีต่อครั้ง |
 | weather-disaster ไป API ภายนอก | 8 วินาทีต่อครั้ง ยิงหลายแหล่งพร้อมกัน ไม่ใช่ทีละแหล่ง |
@@ -188,6 +189,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | GET | `/api/v1/hazards?min_lat=&min_lng=&max_lat=&max_lng=` | หมุดภัยในกรอบแผนที่ (Safety Map) |
 | POST | `/api/v1/assistant/chat` | `{message, history[]}` ได้ `ChatReply` |
 | GET | `/api/v1/safety/emergency?hazard_type=` | คำแนะนำฉุกเฉินของภัยชนิดนั้น ได้ `Emergency` (แสดงเมื่อเส้นทางหรือหมุดภัยเป็น HIGH) |
+| GET | `/api/v1/places/search?q=` | ค้นสถานที่ในไทยจากชื่อที่พิมพ์ (ช่องปักหมุดในฟอร์มทริป) ได้ `{"places": [Place...]}` ไม่เกิน 5 ตัว (รูปแบบด้านล่าง) |
 
 ### routing-engine
 
@@ -279,6 +281,19 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 
 `source` ของ Hazard ที่ใช้ได้: `OPEN_METEO`, `GDACS`, `USGS`, `THAIWATER`, `TMD`, `DERIVED` (ประเมินเองจากข้อมูลอื่น เช่น เสี่ยงดินถล่มจากฝนสะสม ต้องบอกผู้ใช้ว่าเป็นการประเมิน)
 คำตอบของ `GET /hazards`: `{"hazards": [Hazard...], "warnings": []}`
+
+หมุด `source: OPEN_METEO` (`RAIN`, `HEAVY_RAIN`, `STRONG_WIND`) คือ**อากาศชั่วโมงนี้** มีไว้ให้ Safety Map แสดงว่าตอนนี้ฝนตก/ลมแรงที่ไหน ระดับ `severity` ใช้เกณฑ์ฝน/ลมในหัวข้อ 4 (ฝนเบา 2 ถึง 10 มม./ชม. เป็น `RAIN` LOW) **risk-decision ต้องข้ามหมุดชนิดนี้** เพราะใช้พยากรณ์ ณ เวลาที่ไปถึงอยู่แล้ว ถ้านับซ้ำจะได้ความเสี่ยงของ "ตอนนี้" แทน "ตอนที่ไปถึง"
+
+`Place` (คำตอบของ `GET /places/search`)
+
+```json
+{ "places": [ { "name": "กรุงเทพมหานคร", "detail": "กรุงเทพมหานคร", "lat": 13.7525, "lng": 100.4935 } ] }
+```
+
+- `q` สั้นกว่า 2 ตัวอักษรได้ `VALIDATION_ERROR` · ไม่เจอได้ `places: []` · ทุกผลต้องอยู่ในประเทศไทย
+- คำย่อที่คนไทยพิมพ์บ่อยต้องเจอ เช่น `กทม` > กรุงเทพมหานคร, `โคราช` > นครราชสีมา
+- บริการค้นสถานที่ล่มหรือช้าได้ `UPSTREAM_ERROR` / `UPSTREAM_TIMEOUT` หน้าเว็บบอกผู้ใช้ให้ปักหมุดบนแผนที่แทน ห้ามค้าง
+- ใช้ Photon (`photon.komoot.io`) ซึ่งอนุญาตให้ค้นแบบพิมพ์ไปเจอไป ห้ามใช้ Nominatim ทำแบบนี้ (ผิดเงื่อนไขการใช้งานของเขา)
 
 คำตอบของ `GET /weather/area` และ `GET /area`
 

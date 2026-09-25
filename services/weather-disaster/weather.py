@@ -1,17 +1,25 @@
 """Hourly forecast from Open-Meteo for points along a route."""
+import json
+import math
+import os
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
-from geo import to_iso
+from geo import haversine_km, to_iso
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 HOURLY_VARS = "precipitation,wind_speed_10m,temperature_2m,weather_code"
 TIMEOUT_S = 8
 CACHE_TTL_S = 30 * 60
 CACHE_MAX = 5000
+AREA_STEP_KM = 25
+KM_PER_DEG_LAT = 111.32
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+DEMO_MATCH_KM = 15
 
 # WMO weather codes used by Open-Meteo
 WMO_TH = {
@@ -110,6 +118,7 @@ def pick_hour(hourly: dict, t: datetime) -> tuple[dict | None, str | None]:
 _cache: dict[tuple[float, float], tuple[float, dict]] = {}
 _lock = threading.Lock()
 _now = time.monotonic
+_demo: dict[str, list] = {}  # fixture path -> [(lat, lng, hourly)]
 
 
 def cache_key(lat: float, lng: float) -> tuple[float, float]:
@@ -120,6 +129,7 @@ def cache_key(lat: float, lng: float) -> tuple[float, float]:
 def clear_cache() -> None:
     with _lock:
         _cache.clear()
+        _demo.clear()
 
 
 def _cache_get(key, now: float) -> dict | None:
@@ -140,31 +150,97 @@ def _cache_put(key, hourly: dict, now: float) -> None:
         _cache[key] = (now, hourly)
 
 
-def forecast_points(points: list[tuple[float, float, datetime]]) -> tuple[list[dict | None], list[str]]:
-    """Same order and same count as the input. Unknown data is None plus a warning."""
-    if not points:
-        return [], []
+def demo_mode() -> bool:
+    return os.getenv("DEMO_MODE", "false").lower() == "true"
+
+
+def _demo_points() -> list:
+    path = FIXTURES / "forecast.json"
+    with _lock:
+        if str(path) not in _demo:
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8")).get("points", {})
+            except (OSError, ValueError, AttributeError):
+                raw = {}
+            points = []
+            for key, hourly in raw.items():
+                lat, lng = key.split("_")
+                points.append((float(lat), float(lng), hourly))
+            _demo[str(path)] = points
+        return _demo[str(path)]
+
+
+def shift_to_today(hourly: dict, today: datetime) -> dict:
+    """Move a recorded series so its first day is today; the demo works on any date."""
+    times = hourly.get("time") or []
+    if not times:
+        return hourly
+    fmt = "%Y-%m-%dT%H:%M"
+    first = datetime.strptime(times[0], fmt).replace(hour=0, minute=0, tzinfo=timezone.utc)
+    delta = today.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - first
+    shifted = [(datetime.strptime(t, fmt).replace(tzinfo=timezone.utc) + delta).strftime(fmt) for t in times]
+    return {**hourly, "time": shifted}
+
+
+def demo_hourly(coords: list[tuple[float, float]]) -> list[dict | None]:
+    """Nearest recorded point within DEMO_MATCH_KM, never the network."""
+    recorded = _demo_points()
+    today = datetime.now(timezone.utc)
+    out: list[dict | None] = []
+    for lat, lng in coords:
+        best, best_km = None, DEMO_MATCH_KM
+        for r_lat, r_lng, hourly in recorded:
+            km = haversine_km({"lat": lat, "lng": lng}, {"lat": r_lat, "lng": r_lng})
+            if km <= best_km:
+                best, best_km = hourly, km
+        out.append(shift_to_today(best, today) if best else None)
+    return out
+
+
+def _demo_blocks(keys: list) -> tuple[dict, list[str]]:
+    blocks = {k: h for k, h in zip(keys, demo_hourly(keys)) if h is not None}
+    return blocks, ([] if len(blocks) == len(keys) else ["WEATHER_UNAVAILABLE"])
+
+
+def _live_blocks(keys: list) -> tuple[dict, list[str]]:
     now = _now()
-    keys = [cache_key(lat, lng) for lat, lng, _ in points]
     blocks: dict = {}
     missing = []
-    for key in dict.fromkeys(keys):  # unique, order kept
+    for key in keys:
         hourly = _cache_get(key, now)
         if hourly is None:
             missing.append(key)
         else:
             blocks[key] = hourly
+    if not missing:
+        return blocks, []
+    try:
+        fetched = fetch_hourly(missing)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return blocks, ["WEATHER_UNAVAILABLE"]
+    for key, hourly in zip(missing, fetched):
+        _cache_put(key, hourly, now)
+        blocks[key] = hourly
+    return blocks, []
 
-    warnings: list[str] = []
-    if missing:
-        try:
-            fetched = fetch_hourly(missing)
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            warnings.append("WEATHER_UNAVAILABLE")
-        else:
-            for key, hourly in zip(missing, fetched):
-                _cache_put(key, hourly, now)
-                blocks[key] = hourly
+
+def hourly_blocks(coords: list[tuple[float, float]]) -> tuple[list[dict | None], list[str]]:
+    """Whole hourly series per coordinate, same order, from fixtures or cache or Open-Meteo."""
+    if not coords:
+        return [], []
+    keys = [cache_key(lat, lng) for lat, lng in coords]
+    unique = list(dict.fromkeys(keys))
+    blocks, warnings = _demo_blocks(unique) if demo_mode() else _live_blocks(unique)
+    return [blocks.get(k) for k in keys], warnings
+
+
+def forecast_points(points: list[tuple[float, float, datetime]]) -> tuple[list[dict | None], list[str]]:
+    """Same order and same count as the input. Unknown data is None plus a warning."""
+    if not points:
+        return [], []
+    keys = [cache_key(lat, lng) for lat, lng, _ in points]
+    unique = list(dict.fromkeys(keys))
+    blocks, warnings = _demo_blocks(unique) if demo_mode() else _live_blocks(unique)
 
     results: list[dict | None] = []
     for (_, _, t), key in zip(points, keys):
@@ -177,3 +253,14 @@ def forecast_points(points: list[tuple[float, float, datetime]]) -> tuple[list[d
         if warning and warning not in warnings:
             warnings.append(warning)
     return results, warnings
+
+
+def area_grid(lat: float, lng: float) -> list[tuple[float, float]]:
+    """3x3 cells about AREA_STEP_KM apart, south-west first, the centre is index 4."""
+    dlat = AREA_STEP_KM / KM_PER_DEG_LAT
+    # a degree of longitude shrinks towards the poles
+    dlng = AREA_STEP_KM / (KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01))
+    return [
+        (round(lat + dy * dlat, 4), round(lng + dx * dlng, 4))
+        for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+    ]

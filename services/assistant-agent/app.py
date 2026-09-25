@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 import llm
 import rules
+import tools
 from envelope import ApiError, call, ok, setup
 
 app = FastAPI(title="assistant-agent")
@@ -57,5 +58,5 @@ def chat(body: ChatIn, authorization: Optional[str] = Header(None)):
     reply = rules.try_rules(message, authorization, backend)
     if reply is not None:
         return ok(reply)
-    # TODO(assistant-agent): ให้ LLM เรียก tools (list_trips, update_trip_time, plan_trip) ผ่าน backend()
-    return ok(llm.answer(message, body.history, safety_search(message)))
+    return ok(llm.answer(message, body.history, safety_search(message),
+                         lambda name, args: tools.run(name, args, backend, authorization)))

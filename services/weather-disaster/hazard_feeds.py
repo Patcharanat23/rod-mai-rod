@@ -1,11 +1,17 @@
 """Disaster pins from GDACS (floods, storms) and USGS (earthquakes)."""
+import json
 import logging
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 
 from geo import THAILAND_BOUNDS, to_iso
+import landslide
+from weather import demo_mode
 
 logger = logging.getLogger("weather-disaster")
 
@@ -16,6 +22,8 @@ TIMEOUT_S = 8
 EQ_MIN_MAG = 4.0
 EQ_MARGIN_DEG = 2.0  # quakes just across the border are still felt in Thailand
 EQ_DAYS = 7
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+CACHE_TTL_S = 10 * 60
 
 GDACS_TYPES = {"FL": ("FLOOD", "น้ำท่วม"), "TC": ("STORM", "พายุหมุนเขตร้อน")}
 GDACS_SEVERITY = {"Green": "LOW", "Orange": "MEDIUM", "Red": "HIGH"}
@@ -124,10 +132,10 @@ def fetch_gdacs(box: Box) -> list[dict]:
     return parse_all(res.json().get("features"), box, parse_gdacs)
 
 
-def fetch_usgs(box: Box) -> list[dict]:
+def usgs_params() -> dict:
     area = widen(THAILAND_BOUNDS, EQ_MARGIN_DEG)
     start = datetime.now(timezone.utc) - timedelta(days=EQ_DAYS)
-    params = {
+    return {
         "format": "geojson",
         "minmagnitude": EQ_MIN_MAG,
         "minlatitude": area[0],
@@ -136,25 +144,83 @@ def fetch_usgs(box: Box) -> list[dict]:
         "maxlongitude": area[3],
         "starttime": start.strftime("%Y-%m-%dT%H:%M:%S"),
     }
-    res = httpx.get(USGS_URL, params=params, timeout=TIMEOUT_S)
+
+
+def fetch_usgs(box: Box) -> list[dict]:
+    res = httpx.get(USGS_URL, params=usgs_params(), timeout=TIMEOUT_S)
     res.raise_for_status()
     return parse_all(res.json().get("features"), box, parse_usgs)
 
 
-SOURCES = (fetch_gdacs, fetch_usgs)
+def read_fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def demo_gdacs(box: Box) -> list[dict]:
+    return parse_all(read_fixture("gdacs.json").get("features"), box, parse_gdacs)
+
+
+def demo_usgs(box: Box) -> list[dict]:
+    return parse_all(read_fixture("usgs.json").get("features"), box, parse_usgs)
+
+
+def derived_landslide(box: Box) -> list[dict]:
+    return landslide.landslide_hazards(box)
+
+
+# every source is fetched once for the whole area, then filtered per request,
+# so moving the map does not refetch; each source is cached on its own
+ALL_BOX = widen(THAILAND_BOUNDS, EQ_MARGIN_DEG)
+_cache: dict[tuple, tuple[float, list]] = {}
+_lock = threading.Lock()
+_now = time.monotonic
+
+
+def clear_cache() -> None:
+    with _lock:
+        _cache.clear()
+
+
+def _cached(key, now: float) -> list | None:
+    with _lock:
+        item = _cache.get(key)
+    if item and now - item[0] < CACHE_TTL_S:
+        return item[1]
+    return None
 
 
 def get_hazards(box: Box) -> tuple[list[dict], list[str]]:
-    """All sources in parallel. A failed source becomes a warning, the rest still return."""
-    hazards: list[dict] = []
+    """All sources in parallel. A failed source becomes a warning, is not cached, the rest still return."""
+    demo = demo_mode()
+    if demo:
+        sources = (("gdacs", demo_gdacs), ("usgs", demo_usgs), ("landslide", derived_landslide))
+    else:
+        sources = (("gdacs", fetch_gdacs), ("usgs", fetch_usgs), ("landslide", derived_landslide))
+    now = _now()
+    found: dict[str, list] = {}
+    todo = []
+    for name, fn in sources:
+        hit = _cached((demo, name), now)
+        if hit is None:
+            todo.append((name, fn))
+        else:
+            found[name] = hit
+
     warnings: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
-        futures = [(fn.__name__, pool.submit(fn, box)) for fn in SOURCES]
-        for name, fut in futures:
-            try:
-                hazards.extend(fut.result())
-            except Exception:
-                logger.warning("hazard source failed: %s", name, exc_info=True)
-                if "HAZARD_FEED_UNAVAILABLE" not in warnings:
-                    warnings.append("HAZARD_FEED_UNAVAILABLE")
+    if todo:
+        with ThreadPoolExecutor(max_workers=len(todo)) as pool:
+            futures = [(name, pool.submit(fn, ALL_BOX)) for name, fn in todo]
+            for name, fut in futures:
+                try:
+                    result = fut.result()
+                except Exception:
+                    logger.warning("hazard source failed: %s", name, exc_info=True)
+                    if "HAZARD_FEED_UNAVAILABLE" not in warnings:
+                        warnings.append("HAZARD_FEED_UNAVAILABLE")
+                    continue
+                with _lock:
+                    _cache[(demo, name)] = (now, result)
+                found[name] = result
+
+    hazards = [h for name, _ in sources for h in found.get(name, []) if in_box(h["lat"], h["lng"], box)]
     return hazards, warnings

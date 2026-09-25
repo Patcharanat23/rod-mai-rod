@@ -12,10 +12,11 @@ NOW = datetime(2030, 1, 1, tzinfo=timezone.utc)
 class FakeBackend:
     """แทน api-backend จดทุกคำขอไว้ให้เทสต์ตรวจ"""
 
-    def __init__(self, trips, plan_fails=False):
+    def __init__(self, trips, plan_fails=False, plan_warnings=None):
         self.trips = {t["trip_id"]: t for t in trips}
         self.calls = []
         self.plan_fails = plan_fails
+        self.plan_warnings = plan_warnings or []
 
     def __call__(self, method, path, auth, json=None):
         assert auth == AUTH  # ต้องใช้ token ของผู้ใช้เสมอ
@@ -31,7 +32,7 @@ class FakeBackend:
         if method == "POST" and path.endswith("/plan"):
             if self.plan_fails:
                 raise ApiError("UPSTREAM_TIMEOUT", "ระบบ routing-engine ตอบไม่ทันเวลา")
-            return {"risk_level": "LOW", "summary_th": "สภาพอากาศตลอดเส้นทางปกติ"}
+            return {"risk_level": "LOW", "summary_th": "สภาพอากาศตลอดเส้นทางปกติ", "warnings": self.plan_warnings}
         raise AssertionError(path)
 
     def patched(self):
@@ -123,6 +124,13 @@ def test_new_time_in_the_past_is_refused():
     assert "ผ่านไปแล้ว" in out["reply"] and be.patched() == []
 
 
+def test_move_beyond_forecast_range_says_why_risk_is_unknown():
+    be = FakeBackend([trip(1, "2030-01-05T01:00:00Z")], plan_warnings=["FORECAST_OUT_OF_RANGE"])
+    out = run("เลื่อน Trip 01 ไปวันถัดไป", be)
+    assert "ไกลเกินช่วงพยากรณ์" in out["reply"]
+    assert "ไกลเกิน" not in run("เลื่อน Trip 01 ไปวันถัดไป", FakeBackend([trip(1, "2030-01-05T01:00:00Z")]))["reply"]
+
+
 def test_plan_failure_still_reports_the_move_honestly():
     be = FakeBackend([trip(1, "2030-01-05T01:00:00Z")], plan_fails=True)
     out = run("เลื่อน Trip 01 ไปวันถัดไป", be)
@@ -140,3 +148,23 @@ def test_backend_error_is_not_reported_as_success():
 @pytest.mark.parametrize("text", ["เชียงใหม่น่าเที่ยวไหม", "น้ำท่วมต้องทำยังไง", "อากาศวันนี้เป็นไง"])
 def test_other_messages_go_to_llm(text):
     assert rules.parse(text) is None
+
+
+@pytest.mark.parametrize("text", [
+    "ช่วยเลื่อนทริปที่ 1 ออกไปอีก 2 วัน ออกตอน 9 โมงเช้า",
+    "เลื่อน Trip 01 เป็นช่วงเช้า 7 โมง",
+    "เลื่อน Trip 01 ไป 13:30",
+])
+def test_specific_day_or_time_goes_to_llm_not_a_wrong_rule(text):
+    # กฎรู้แค่ "วันถัดไป" กับช่วงเช้า/บ่าย/เย็น ถ้ารับไปจะเลื่อนผิดเวลาโดยไม่บอกผู้ใช้
+    assert rules.parse(text) is None
+
+
+@pytest.mark.parametrize("text, kind, trip_no", [
+    ("เลื่อนทริปที่ 2 ไปวันถัดไป", "next_day", 2),
+    ("เลื่อน Trip 01 ไปอีก 1 วัน", "next_day", 1),
+    ("ทริปที่ 1 อากาศเป็นยังไง", "weather", 1),
+])
+def test_trip_number_written_the_thai_way(text, kind, trip_no):
+    cmd = rules.parse(text)
+    assert cmd["kind"] == kind and cmd["trip_no"] == trip_no

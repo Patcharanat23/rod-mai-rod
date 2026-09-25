@@ -77,3 +77,27 @@ def test_every_fixture_is_named_by_its_stops_and_valid():
         body = routing.json.loads(f.read_text())
         assert body["code"] == "Ok" and isinstance(body["routes"][0]["geometry"], str)  # polyline
         assert len(body["waypoints"]) == len(stops)
+
+
+def test_demo_mode_accepts_a_tap_near_the_sample_trip(demo_offline):
+    # จิ้มแผนที่บนเวทีคลาดไปหลายกิโล (แถวบางซื่อ, ใต้ตัวเมืองเชียงใหม่) ยังได้ทริปตัวอย่าง
+    tapped = [routing.Place(lat=13.80, lng=100.54), routing.Place(lat=18.74, lng=98.96)]
+    assert all(routing.haversine_km(t.model_dump(), s.model_dump()) > 5 for t, s in zip(tapped, [BKK, CNX]))
+    assert [r["duration_min"] for r in routing.fetch_routes(tapped)] == [516, 554]
+    (r,) = routing.fetch_routes([tapped[0], routing.Place(lat=15.69, lng=100.12), tapped[1]])
+    assert 150 <= r["stop_minutes"][1] <= 200
+
+
+def test_demo_mode_too_far_or_different_stops_is_still_an_error(demo_offline):
+    with pytest.raises(ApiError):
+        routing.fetch_routes([BKK, routing.Place(lat=18.5, lng=98.9)])  # ห่างเชียงใหม่ประมาณ 32 กม.
+    with pytest.raises(ApiError):
+        routing.fetch_routes([BKK, routing.Place(lat=16.0, lng=100.0), CNX])  # หมุดกลางไม่ใช่นครสวรรค์
+
+
+def test_nearest_fixture_matches_same_stop_count_only():
+    key = routing.route_key([BKK, CNX])
+    assert routing.nearest_fixture(key) == routing.fixture_path(key)
+    assert routing.nearest_fixture(((13.8, 100.5), (18.8, 99.0))).stem.count("__") == 1
+    # กรุงเทพ > นครสวรรค์ ตรงกับครึ่งแรกของทริปแวะนครสวรรค์ แต่เป็นคนละทริป ต้องไม่หยิบมาใช้
+    assert routing.nearest_fixture(routing.route_key([BKK, NSN])) is None

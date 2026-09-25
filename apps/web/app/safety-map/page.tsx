@@ -1,7 +1,7 @@
 "use client";
 
 // โมดูล 3 อ่าน app/safety-map/README.md ก่อน จุดที่ต้องเติมมี TODO(web-safety-assistant)
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import EmergencyCard from "@/shared/EmergencyCard";
 import Map, { type Bounds } from "@/shared/Map";
 import StatusBox from "@/shared/StatusBox";
@@ -31,6 +31,70 @@ const SEVERITIES: RiskLevel[] = ["HIGH", "MEDIUM", "LOW"];
 
 function hazardMeta(type: string) {
   return HAZARD_META[type as HazardType] ?? UNKNOWN_HAZARD;
+}
+
+// กลุ่มของตัวกรอง ชนิดที่ไม่รู้จักรวมเป็น "อื่นๆ"
+const OTHER = "OTHER";
+const FILTER_GROUPS = [...Object.keys(HAZARD_META), OTHER];
+
+const FILTER_BTN = { display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", fontSize: 13 };
+
+function filterGroup(type: string) {
+  return type in HAZARD_META ? type : OTHER;
+}
+
+function HazardFilter({
+  hazards,
+  selected,
+  onChange,
+}: {
+  hazards: Hazard[];
+  selected: Set<string>;
+  onChange: Dispatch<SetStateAction<Set<string>>>;
+}) {
+  const counts: Record<string, number> = {};
+  for (const h of hazards) {
+    const g = filterGroup(h.hazard_type);
+    counts[g] = (counts[g] ?? 0) + 1;
+  }
+  function toggle(g: string) {
+    onChange((prev) => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g);
+      else next.add(g);
+      return next;
+    });
+  }
+  const all = selected.size === 0;
+  return (
+    <div className="row" role="group" aria-label="กรองหมุดตามชนิดภัย" style={{ gap: 6, marginBottom: 12 }}>
+      <button
+        type="button"
+        className={`btn ${all ? "" : "btn-outline"}`}
+        style={FILTER_BTN}
+        aria-pressed={all}
+        onClick={() => onChange(new Set())}
+      >
+        ทั้งหมด ({hazards.length})
+      </button>
+      {FILTER_GROUPS.map((g) => {
+        const on = selected.has(g);
+        return (
+          <button
+            key={g}
+            type="button"
+            className={`btn ${on ? "" : "btn-outline"}`}
+            style={FILTER_BTN}
+            aria-pressed={on}
+            onClick={() => toggle(g)}
+          >
+            <HazardSymbol type={g} color={on ? "#fff" : undefined} />
+            {g === OTHER ? "อื่นๆ" : hazardMeta(g).label} ({counts[g] ?? 0})
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function HazardSymbol({ type, color = "#374151" }: { type: string; color?: string }) {
@@ -101,7 +165,8 @@ function HazardPopup({ h }: { h: Hazard }) {
         <div>
           <strong>{h.title_th}</strong>
           {/* ข้อมูลประเมินห้ามดูเหมือนประกาศทางการ (README ข้อ 4) */}
-          {derived && <strong style={{ color: "#b45309" }}> (ประเมิน)</strong>}
+          {/* weather-disaster อาจใส่คำว่าประเมินในชื่อมาแล้ว ไม่ต้องต่อซ้ำ */}
+          {derived && !h.title_th.includes("ประเมิน") && <strong style={{ color: "#b45309" }}> (ประเมิน)</strong>}
         </div>
       </div>
       <div className="row" style={{ gap: 6, margin: "4px 0" }}>
@@ -127,6 +192,8 @@ function HazardPopup({ h }: { h: Hazard }) {
 export default function SafetyMapPage() {
   const [rawBounds, setRawBounds] = useState<Bounds | null>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
+  // ว่าง = แสดงทุกชนิด เก็บแยกจากข้อมูล จึงค้างอยู่ตอนเลื่อน/ซูมแผนที่
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!rawBounds) return;
@@ -146,6 +213,8 @@ export default function SafetyMapPage() {
   const { data, error, loading, reload } = useApi<{ hazards: Hazard[]; warnings: string[] }>(
     query ? `/hazards?${query}` : null,
   );
+  const hazards = data?.hazards ?? [];
+  const shown = selected.size === 0 ? hazards : hazards.filter((h) => selected.has(filterGroup(h.hazard_type)));
 
   return (
     <div className="card">
@@ -153,12 +222,13 @@ export default function SafetyMapPage() {
       {data && <Warnings warnings={data.warnings} />}
       {error && <StatusBox error={error} onRetry={reload} />}
       {loading && <p className="muted">กำลังโหลดหมุด...</p>}
+      <HazardFilter hazards={hazards} selected={selected} onChange={setSelected} />
       {/* TODO(web-safety-assistant): marker cluster (README ข้อ 2) ต้องขอเพิ่ม package ก่อน */}
       <div style={{ position: "relative" }}>
         <Legend />
         <Map
           onBoundsChange={setRawBounds}
-          markers={(data?.hazards ?? []).map((h) => ({
+          markers={shown.map((h) => ({
             id: h.hazard_id,
             lat: h.lat,
             lng: h.lng,
@@ -168,7 +238,10 @@ export default function SafetyMapPage() {
           }))}
         />
       </div>
-      {data && data.hazards.length === 0 && <p className="muted">ไม่มีจุดเสี่ยงในบริเวณนี้</p>}
+      {data && hazards.length === 0 && <p className="muted">ไม่มีจุดเสี่ยงในบริเวณนี้</p>}
+      {data && hazards.length > 0 && shown.length === 0 && (
+        <p className="muted">ไม่มีหมุดชนิดที่เลือกในบริเวณนี้ กด "ทั้งหมด" เพื่อดูทุกชนิด</p>
+      )}
     </div>
   );
 }
