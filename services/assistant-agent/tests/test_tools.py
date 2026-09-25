@@ -54,6 +54,18 @@ def test_update_by_hours_needs_no_original_time():
     assert be.patched() == [{"departure_time": "2030-01-05T13:00:00Z"}]
 
 
+def test_update_to_a_date_keeps_thai_time_and_refuses_past_dates():
+    be = FakeBackend([full_trip(1, "2030-01-05T01:00:00Z")])  # 08:00 ไทย
+    out, _ = run("update_trip_time", {"trip_no": 1, "date": "2030-01-09"}, be)
+    assert be.patched() == [{"departure_time": "2030-01-09T01:00:00Z"}] and out["departure_th"] == "9 ม.ค. 08:00 น."
+    past = FakeBackend([full_trip(1, "2030-01-05T01:00:00Z")])
+    out, actions = run("update_trip_time", {"trip_no": 1, "date": "2020-01-01"}, past)
+    assert "ผ่านไปแล้ว" in out["error"] and actions == [] and past.patched() == []
+    bad = FakeBackend([full_trip(1, "2030-01-05T01:00:00Z")])
+    out, _ = run("update_trip_time", {"trip_no": 1, "date": "9 ม.ค."}, bad)
+    assert "error" in out and bad.patched() == []
+
+
 def test_update_rejects_past_same_and_bad_input_without_patching():
     be = FakeBackend([full_trip(1, "2030-01-05T01:00:00Z")])
     for args in ({"trip_no": 1}, {"trip_no": 1, "time": "25:00"}, {"trip_no": 1, "shift_days": -3},
