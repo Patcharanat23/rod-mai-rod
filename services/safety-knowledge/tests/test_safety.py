@@ -64,3 +64,16 @@ def test_unrelated_queries_return_empty_results(unrelated_query):
     res = client.post("/api/v1/safety/search", json={"query": unrelated_query})
     assert res.status_code == 200
     assert res.json()["data"]["results"] == []
+    
+def test_title_scoring_ranks_strong_wind_first():
+    res = client.post("/api/v1/safety/search", json={"query": "ลมแรงมากขับรถยังไงดี"})
+    assert res.status_code == 200
+    results = res.json()["data"]["results"]
+    assert len(results) > 0
+    assert results[0]["doc_id"] == "strong_wind"
+    
+def test_unrelated_query_returns_empty_results():
+    res = client.post("/api/v1/safety/search", json={"query": "สูตรต้มยำกุ้ง"})
+    assert res.status_code == 200
+    results = res.json()["data"]["results"]
+    assert results == []

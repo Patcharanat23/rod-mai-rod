@@ -134,8 +134,7 @@ def score(query: str, line: str) -> float:
     line_grams = get_trigrams(line)
     if not query_grams or not line_grams:
         return 0.0
-    
-    # นับจำนวน trigram ที่ตรงกันโดยตรง
+
     return float(len(query_grams.intersection(line_grams)))
 
 
@@ -143,23 +142,30 @@ def score(query: str, line: str) -> float:
 def search(body: SearchIn):
     if not body.query.strip():
         raise ApiError("VALIDATION_ERROR", "ข้อความค้นหาว่าง")
-    
+
     wanted = set(body.hazard_types)
     query_grams = get_trigrams(body.query)
-    
-    # คำนวณ Threshold: ต้องตรงอย่างน้อย 3 trigrams หรืออย่างน้อยครึ่งหนึ่งของ query trigrams
+
     min_match_threshold = min(3, len(query_grams) // 2) if len(query_grams) >= 2 else 1
 
     hits = []
     for doc in DOCS:
         if wanted and not wanted & set(doc["hazard_types"]):
             continue
+
+        # คำนวณคะแนน Trigram ของ title_th
+        title_score = score(body.query, doc["title_th"])
+        title_matched = title_score >= min_match_threshold and title_score > 0
+        title_bonus = title_score * 2.0 if title_matched else 0.0
+
+        matched_lines_count = 0
         for line in doc["lines"]:
             s = score(body.query, line)
-            
-            # กรองคำที่ไม่เกี่ยวข้องออกด้วย min_match_threshold
+
+            # ให้คะแนนบรรทัดที่ตรงตามเกณฑ์ + คะแนนโบนัสจาก Title
             if s >= min_match_threshold and s > 0:
-                score_weight = s + (1 if wanted else 0)
+                matched_lines_count += 1
+                score_weight = s + title_bonus + (1.0 if wanted else 0.0)
                 hits.append((
                     score_weight,
                     {
@@ -169,8 +175,33 @@ def search(body: SearchIn):
                         "source": doc["source"],
                     },
                 ))
+
+        # ถ้าไม่มีบรรทัดไหนในเนื้อหาตรงเลย แต่ title_th ตรงเกณฑ์ ให้ส่งบรรทัดแรกของเอกสารมา 1 บรรทัด
+        if matched_lines_count == 0 and title_matched and doc["lines"]:
+            score_weight = title_bonus + (1.0 if wanted else 0.0)
+            hits.append((
+                score_weight,
+                {
+                    "doc_id": doc["doc_id"],
+                    "title_th": doc["title_th"],
+                    "snippet_th": doc["lines"][0],
+                    "source": doc["source"],
+                },
+            ))
+
     hits.sort(key=lambda h: -h[0])
-    return ok({"results": [h[1] for h in hits[: body.limit]], "warnings": []})
+
+    unique_results = []
+    seen = set()
+    for _, item in hits:
+        key = (item["doc_id"], item["snippet_th"])
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(item)
+            if len(unique_results) >= body.limit:
+                break
+
+    return ok({"results": unique_results, "warnings": []})
 
 
 @app.get("/api/v1/safety/emergency")
