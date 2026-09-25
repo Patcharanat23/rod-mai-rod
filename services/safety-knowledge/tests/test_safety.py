@@ -71,3 +71,9 @@ def test_title_scoring_ranks_strong_wind_first():
     results = res.json()["data"]["results"]
     assert len(results) > 0
     assert results[0]["doc_id"] == "strong_wind"
+    
+def test_unrelated_query_returns_empty_results():
+    res = client.post("/api/v1/safety/search", json={"query": "สูตรต้มยำกุ้ง"})
+    assert res.status_code == 200
+    results = res.json()["data"]["results"]
+    assert results == []

@@ -153,15 +153,19 @@ def search(body: SearchIn):
         if wanted and not wanted & set(doc["hazard_types"]):
             continue
 
-        # ให้คะแนนส่วน title_th โดยเพิ่มน้ำหนักเป็น 2 เท่า
-        title_s = score(body.query, doc["title_th"]) * 2.0
+        # คำนวณคะแนน Trigram ของ title_th
+        title_score = score(body.query, doc["title_th"])
+        title_matched = title_score >= min_match_threshold and title_score > 0
+        title_bonus = title_score * 2.0 if title_matched else 0.0
 
+        matched_lines_count = 0
         for line in doc["lines"]:
             s = score(body.query, line)
-            max_s = max(s, title_s)
 
-            if max_s >= min_match_threshold and max_s > 0:
-                score_weight = max_s + (1.0 if wanted else 0.0)
+            # ให้คะแนนบรรทัดที่ตรงตามเกณฑ์ + คะแนนโบนัสจาก Title
+            if s >= min_match_threshold and s > 0:
+                matched_lines_count += 1
+                score_weight = s + title_bonus + (1.0 if wanted else 0.0)
                 hits.append((
                     score_weight,
                     {
@@ -171,6 +175,19 @@ def search(body: SearchIn):
                         "source": doc["source"],
                     },
                 ))
+
+        # ถ้าไม่มีบรรทัดไหนในเนื้อหาตรงเลย แต่ title_th ตรงเกณฑ์ ให้ส่งบรรทัดแรกของเอกสารมา 1 บรรทัด
+        if matched_lines_count == 0 and title_matched and doc["lines"]:
+            score_weight = title_bonus + (1.0 if wanted else 0.0)
+            hits.append((
+                score_weight,
+                {
+                    "doc_id": doc["doc_id"],
+                    "title_th": doc["title_th"],
+                    "snippet_th": doc["lines"][0],
+                    "source": doc["source"],
+                },
+            ))
 
     hits.sort(key=lambda h: -h[0])
 
