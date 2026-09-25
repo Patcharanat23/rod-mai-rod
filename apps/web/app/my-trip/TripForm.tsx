@@ -5,7 +5,8 @@ import Map from "@/shared/Map";
 import { api, ApiError } from "@/shared/api";
 import { thaiInputToUtc } from "@/shared/time";
 import { useLocation } from "@/shared/useLocation";
-import type { LatLng, Place, Trip, TripInput } from "@/shared/types";
+import type { LatLng, Place, PlaceResult, Trip, TripInput } from "@/shared/types";
+import PlaceSearch from "./PlaceSearch";
 
 type Props = { onCreated: (t: Trip) => void; onCancel: () => void };
 type Target = "origin" | "destination" | "stop";
@@ -65,6 +66,10 @@ export default function TripForm({ onCreated, onCancel }: Props) {
     place({ lat: pos.lat, lng: pos.lng, name: "ตำแหน่งปัจจุบัน" });
   }
 
+  function pickFromSearch(r: PlaceResult) {
+    place({ lat: r.lat, lng: r.lng, name: r.name });
+  }
+
   function rename(which: Target, name: string, index = 0) {
     if (which === "origin") setOrigin((o) => (o ? { ...o, name } : o));
     else if (which === "destination") setDestination((d) => (d ? { ...d, name } : d));
@@ -114,7 +119,7 @@ export default function TripForm({ onCreated, onCancel }: Props) {
     <div className="grid">
       <div className="card">
         <p className="muted">
-          {target ? `จิ้มแผนที่หรือกดสถานที่ตัวอย่างเพื่อเลือก${TARGET_LABEL[target]}` : "กดปุ่มในฟอร์มเพื่อเลือกหรือเพิ่มจุด"}
+          {target ? `พิมพ์ชื่อ จิ้มแผนที่ หรือกดสถานที่ตัวอย่างเพื่อเลือก${TARGET_LABEL[target]}` : "กดปุ่มในฟอร์มเพื่อเลือกหรือเพิ่มจุด"}
         </p>
         <Map onMapClick={pickOnMap} markers={markers} fitTo={markers.length >= 2 ? markers : undefined} />
       </div>
@@ -165,6 +170,7 @@ export default function TripForm({ onCreated, onCancel }: Props) {
           active={target === "origin"}
           onPick={() => setTarget("origin")}
           onRename={(n) => rename("origin", n)}
+          onSearch={pickFromSearch}
         />
 
         {stops.map((p, i) => (
@@ -176,6 +182,15 @@ export default function TripForm({ onCreated, onCancel }: Props) {
             onRemove={() => setStops((s) => s.filter((_, j) => j !== i))}
           />
         ))}
+        {target === "stop" && stops.length < MAX_STOPS && (
+          <PointField
+            title={`จุดแวะ ${stops.length + 1}`}
+            point={null}
+            active
+            onRename={() => {}}
+            onSearch={pickFromSearch}
+          />
+        )}
         {stops.length < MAX_STOPS ? (
           <button
             type="button"
@@ -195,6 +210,7 @@ export default function TripForm({ onCreated, onCancel }: Props) {
           active={target === "destination"}
           onPick={() => setTarget("destination")}
           onRename={(n) => rename("destination", n)}
+          onSearch={pickFromSearch}
         />
 
         <label>
@@ -234,9 +250,10 @@ type PointFieldProps = {
   onPick?: () => void;
   onRename: (name: string) => void;
   onRemove?: () => void;
+  onSearch?: (p: PlaceResult) => void;
 };
 
-function PointField({ title, point, active, onPick, onRename, onRemove }: PointFieldProps) {
+function PointField({ title, point, active, onPick, onRename, onRemove, onSearch }: PointFieldProps) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
@@ -254,7 +271,9 @@ function PointField({ title, point, active, onPick, onRename, onRemove }: PointF
           )}
         </div>
       </div>
-      {point ? (
+      {active && onSearch ? (
+        <PlaceSearch label={title} onPick={onSearch} />
+      ) : point ? (
         <input
           aria-label={`ชื่อ${title}`}
           placeholder={`ตั้งชื่อ${title}`}
