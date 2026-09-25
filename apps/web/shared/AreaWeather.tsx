@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Map from "./Map";
 import StatusBox from "./StatusBox";
 import Warnings from "./Warnings";
@@ -9,6 +10,8 @@ import { BANGKOK, inThailand, useLocation } from "./useLocation";
 import type { AreaWeather as Area, NearbyPlace } from "./types";
 
 // แผนที่ + สภาพอากาศแบบ area รอบตำแหน่งผู้ใช้ ใช้ตอนผู้ใช้ยังไม่มีทริป (Overview และ My Trip)
+const NEARBY_RETRY_MS = 15_000;
+
 export default function AreaWeather() {
   const { pos: located, denied } = useLocation();
   // ระบบรองรับเฉพาะในไทย (CONTRACT OUT_OF_THAILAND) ผู้ใช้อยู่ต่างประเทศแสดงกรุงเทพแทน
@@ -18,6 +21,17 @@ export default function AreaWeather() {
   // สถานที่เที่ยวใกล้ตัว ดึงไม่ได้ก็ไม่เป็นไร การ์ดอากาศยังต้องแสดงต่อ (CONTRACT หัวข้อ 6)
   const nearby = useApi<{ places: NearbyPlace[] }>(pos ? `/places/nearby?lat=${pos.lat}&lng=${pos.lng}` : null);
   const places = nearby.data?.places ?? [];
+  // Overpass ฟรีช้าเป็นช่วงๆ ดึงไม่ทันลองใหม่อีกครั้งเดียว เผื่อ api-backend โหลดเสร็จเก็บ cache แล้ว
+  const [retried, setRetried] = useState(false);
+  const retryNearby = nearby.reload;
+  useEffect(() => {
+    if (!nearby.error || retried) return;
+    const timer = setTimeout(() => {
+      setRetried(true);
+      retryNearby();
+    }, NEARBY_RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [nearby.error, retried, retryNearby]);
 
   return (
     <div className="card">
@@ -77,7 +91,11 @@ export default function AreaWeather() {
               </div>
             </>
           )}
-          {nearby.error && <p className="muted">ยังดึงสถานที่เที่ยวใกล้ๆ ไม่ได้ตอนนี้</p>}
+          {nearby.error && (
+            <p className="muted">
+              {retried ? "ยังดึงสถานที่เที่ยวใกล้ๆ ไม่ได้ตอนนี้" : "กำลังดึงสถานที่เที่ยวใกล้ๆ อีกครั้ง..."}
+            </p>
+          )}
         </>
       )}
     </div>
