@@ -11,6 +11,7 @@ import httpx
 
 from geo import THAILAND_BOUNDS, to_iso
 import landslide
+import weather_pins
 from weather import demo_mode
 
 logger = logging.getLogger("weather-disaster")
@@ -168,6 +169,10 @@ def derived_landslide(box: Box) -> list[dict]:
     return landslide.landslide_hazards(box)
 
 
+def current_weather(box: Box) -> list[dict]:
+    return weather_pins.weather_hazards(box)
+
+
 # every source is fetched once for the whole area, then filtered per request,
 # so moving the map does not refetch; each source is cached on its own
 ALL_BOX = widen(THAILAND_BOUNDS, EQ_MARGIN_DEG)
@@ -189,18 +194,20 @@ def _cached(key, now: float) -> list | None:
     return None
 
 
-def get_hazards(box: Box) -> tuple[list[dict], list[str]]:
+def get_hazards(box: Box, refresh: bool = False) -> tuple[list[dict], list[str]]:
     """All sources in parallel. A failed source becomes a warning, is not cached, the rest still return."""
     demo = demo_mode()
     if demo:
-        sources = (("gdacs", demo_gdacs), ("usgs", demo_usgs), ("landslide", derived_landslide))
+        sources = (("gdacs", demo_gdacs), ("usgs", demo_usgs),
+                   ("landslide", derived_landslide), ("weather", current_weather))
     else:
-        sources = (("gdacs", fetch_gdacs), ("usgs", fetch_usgs), ("landslide", derived_landslide))
+        sources = (("gdacs", fetch_gdacs), ("usgs", fetch_usgs),
+                   ("landslide", derived_landslide), ("weather", current_weather))
     now = _now()
     found: dict[str, list] = {}
     todo = []
     for name, fn in sources:
-        hit = _cached((demo, name), now)
+        hit = None if refresh else _cached((demo, name), now)
         if hit is None:
             todo.append((name, fn))
         else:
@@ -224,3 +231,17 @@ def get_hazards(box: Box) -> tuple[list[dict], list[str]]:
 
     hazards = [h for name, _ in sources for h in found.get(name, []) if in_box(h["lat"], h["lng"], box)]
     return hazards, warnings
+
+
+REFRESH_EVERY_S = CACHE_TTL_S - 60  # renew before expiry so real requests always hit the cache
+
+
+def keep_warm() -> None:
+    """Runs in a background thread from startup. The first GDACS/USGS fetch from Thailand can take
+    longer than the 10 s risk-decision waits, so fetch every source before anyone asks."""
+    while True:
+        try:
+            get_hazards(ALL_BOX, refresh=True)
+        except Exception:
+            logger.warning("hazard warm-up failed", exc_info=True)
+        time.sleep(REFRESH_EVERY_S)

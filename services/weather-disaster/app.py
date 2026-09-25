@@ -6,6 +6,7 @@
 DEMO_MODE=true ต้องตอบจากข้อมูลที่บันทึกไว้ ไม่เรียกเน็ตเลย
 """
 import os
+import threading
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
@@ -20,6 +21,13 @@ app = FastAPI(title="weather-disaster")
 setup(app, "weather-disaster")
 
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+
+@app.on_event("startup")
+def warm_hazards():
+    # HAZARD_WARMUP=false turns it off; tests do, so no thread touches the network
+    if os.getenv("HAZARD_WARMUP", "true").lower() == "true":
+        threading.Thread(target=hazard_feeds.keep_warm, daemon=True).start()
 
 
 class TimedPoint(BaseModel):
