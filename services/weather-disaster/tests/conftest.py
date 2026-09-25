@@ -1,7 +1,11 @@
+import os
+
 import pytest
 
 import hazard_feeds
 import weather
+
+os.environ["HAZARD_WARMUP"] = "false"  # no warm-up thread hitting the real network in tests
 
 
 @pytest.fixture(autouse=True)

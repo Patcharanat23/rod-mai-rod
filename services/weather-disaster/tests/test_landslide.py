@@ -38,7 +38,7 @@ class FakeResponse:
 
 @pytest.fixture
 def rain(monkeypatch):
-    """Open-Meteo with the same rain everywhere; GDACS and USGS return nothing."""
+    """Open-Meteo with the same rain everywhere; GDACS, USGS and rain pins return nothing."""
     state = {"mm": 0.0, "calls": 0, "down": False}
 
     def fake_get(url, params=None, timeout=None):
@@ -52,6 +52,7 @@ def rain(monkeypatch):
     monkeypatch.setattr(weather.httpx, "get", fake_get)
     monkeypatch.setattr(hazard_feeds, "fetch_gdacs", lambda box: [])
     monkeypatch.setattr(hazard_feeds, "fetch_usgs", lambda box: [])
+    monkeypatch.setattr(hazard_feeds, "current_weather", lambda box: [])
     return state
 
 

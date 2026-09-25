@@ -175,6 +175,28 @@ def test_summary_none_when_no_forecast():
     assert summary_text(main, main, "NORMAL") == "ตอนนี้ประเมินความเสี่ยงไม่ได้ ข้อมูลสภาพอากาศไม่พร้อม"
 
 
+def test_summary_null_route_mentions_forecast_range_when_flagged():
+    # แก้จากทดสอบรวม 2026-09-25 ข้อ 2 (ส่วนแนะนำ): level null ทั้งเส้นเพราะเกินช่วงพยากรณ์ ต้องบอกแบบนี้
+    # ไม่ใช่ "ข้อมูลสภาพอากาศไม่พร้อม" ซึ่งฟังดูเหมือน weather-disaster ล่ม
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": None, "points": []}
+    summary = summary_text(main, main, "NORMAL", out_of_range=True)
+    assert "เกินช่วงพยากรณ์" in summary
+    assert len(summary) > 0
+
+
+def test_summary_low_but_some_points_missing_does_not_claim_whole_route_normal():
+    # แก้จากทดสอบรวม 2026-09-25 ข้อ 2: จุดที่มีข้อมูลเป็น LOW หมด แต่มีบางจุด null ห้ามบอกว่า
+    # "ตลอดเส้นทางปกติ" (CONTRACT หัวข้อ 3 ห้ามถือว่าไม่มีข้อมูลเท่ากับปลอดภัย)
+    p0 = _point(BKK, 0, "2026-09-24T02:40:00Z", 2, 10, "LOW")
+    p1 = {**_point_north_of(BKK, 50), "eta": "2026-09-24T03:00:00Z", "forecast": None,
+          "hazards": [], "risk_level": None, "risk_score": None}
+    main = {"route_id": "r1", "duration_min": 100, "risk_level": "LOW", "points": [p0, p1]}
+    summary = summary_text(main, main, "NORMAL")
+    assert "ตลอดเส้นทางปกติ" not in summary
+    assert "50 กม." in summary  # ระยะของช่วงแรกที่ไม่มีข้อมูล
+    assert len(summary) > 0
+
+
 def test_thai_time_conversion():
     assert _thai_time_th("2026-09-24T03:00:00Z") == "10:00 น."
     assert _thai_time_th("2026-09-24T20:00:00Z") == "3:00 น."  # ข้ามวัน UTC 20:00 = ไทย 03:00 วันถัดไป
