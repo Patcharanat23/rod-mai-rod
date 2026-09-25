@@ -11,6 +11,7 @@ from envelope import ApiError
 from rules import BANGKOK, RISK_TH, Backend, find_trip, label, thai_time, to_utc_iso
 
 HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+YMD = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 MAX_SHIFT_DAYS = 14
 
 SCHEMAS = [
@@ -27,6 +28,8 @@ SCHEMAS = [
             "trip_no": {"type": "integer", "description": "เลขทริป เช่น Trip 01 คือ 1"},
             "shift_days": {"type": "integer", "description": "เลื่อนจากวันเดิมกี่วัน เช่น วันถัดไป = 1 ไม่เลื่อนวัน = 0"},
             "time": {"type": "string", "description": "เวลาออกใหม่ตามเวลาไทย HH:MM เช่น 13:00 ไม่ส่ง = เวลาเดิม"},
+            "date": {"type": "string",
+                     "description": "วันออกใหม่ตามเวลาไทย YYYY-MM-DD ใช้เมื่อผู้ใช้บอกวันที่ตรงๆ เช่น 29 ก.ย. ไม่ส่ง = วันเดิม"},
             "shift_hours": {"type": "integer",
                             "description": "เลื่อนจากเวลาเดิมกี่ชั่วโมง เช่น ออกไป 3 ชม. = 3 เร็วขึ้น 2 ชม. = -2 "
                                            "ไม่ต้องรู้เวลาเดิม ระบบคิดให้"},
@@ -91,6 +94,11 @@ def update_trip_time(args: dict, backend: Backend, auth: str, now: Optional[date
         return {"error": f"เลื่อนได้ไม่เกิน {MAX_SHIFT_DAYS * 24} ชั่วโมง"}, []
     new = datetime.fromisoformat(trip["departure_time"].replace("Z", "+00:00")).astimezone(BANGKOK)
     new += timedelta(days=shift)
+    if args.get("date"):
+        d = YMD.match(str(args["date"]).strip())
+        if not d:
+            return {"error": "วันที่ต้องเป็นรูปแบบ YYYY-MM-DD"}, []
+        new = new.replace(year=int(d.group(1)), month=int(d.group(2)), day=int(d.group(3)))
     if args.get("time"):
         m = HHMM.match(str(args["time"]).strip())
         if not m:
