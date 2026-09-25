@@ -262,3 +262,9 @@ def assistant_chat(body: ChatIn, authorization: Optional[str] = Header(None)):
 def places_search(q: str = "", authorization: Optional[str] = Header(None)):
     current_user(authorization)
     return ok({"places": places.search(q)})
+
+
+@app.get("/api/v1/places/nearby")
+def places_nearby(lat: float, lng: float, authorization: Optional[str] = Header(None)):
+    current_user(authorization)
+    return ok({"places": places.nearby(lat, lng)})
