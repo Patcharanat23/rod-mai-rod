@@ -179,3 +179,22 @@ def test_expired_token_is_unauthorized(client):
     res = client.get("/api/v1/me", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 401
     assert res.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+# ---------- weather ----------
+
+def test_weather_area_outside_thailand_is_rejected_without_calling_upstream(client, auth_header, monkeypatch):
+    calls = []
+
+    def fake_call(*args, **kwargs):
+        calls.append(args)
+        return {"center": {"lat": 13.75, "lng": 100.5}, "cells": [], "updated_at": None, "warnings": []}
+
+    monkeypatch.setattr("app.call", fake_call)
+    res = client.get("/api/v1/weather/area", params={"lat": 35.6, "lng": 139.7}, headers=auth_header)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "OUT_OF_THAILAND"
+    assert calls == []
+    res = client.get("/api/v1/weather/area", params={"lat": 13.75, "lng": 100.5}, headers=auth_header)
+    assert res.status_code == 200
+    assert len(calls) == 1

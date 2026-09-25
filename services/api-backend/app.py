@@ -215,6 +215,9 @@ def plan_trip(trip_id: str, authorization: Optional[str] = Header(None)):
 @app.get("/api/v1/weather/area")
 def weather_area(lat: float, lng: float, authorization: Optional[str] = Header(None)):
     current_user(authorization)
+    # เช็คก่อนเรียก ไม่งั้น except ApiError ข้างล่างจะกลืน OUT_OF_THAILAND เป็น WEATHER_UNAVAILABLE
+    if not in_thailand(lat, lng):
+        raise ApiError("OUT_OF_THAILAND", "ตอนนี้รองรับเฉพาะสถานที่ในประเทศไทย")
     try:
         return ok(call("WEATHER_DISASTER_URL", "GET", "/api/v1/area", timeout=WEATHER_TIMEOUT,
                        params={"lat": lat, "lng": lng}))
