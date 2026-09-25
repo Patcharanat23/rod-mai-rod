@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import db
+import places
 from envelope import ApiError, call, ok, setup
 from geo import in_thailand
 
@@ -253,3 +254,11 @@ def assistant_chat(body: ChatIn, authorization: Optional[str] = Header(None)):
     # ส่ง token ของผู้ใช้ไปด้วย assistant-agent ต้องใช้เรียกกลับมาแก้ทริป (CONTRACT หัวข้อ 5)
     return ok(call("ASSISTANT_AGENT_URL", "POST", "/api/v1/chat", timeout=ASSISTANT_TIMEOUT,
                    json=body.model_dump(), headers={"Authorization": authorization}))
+
+
+# ---------- places ----------
+
+@app.get("/api/v1/places/search")
+def places_search(q: str = "", authorization: Optional[str] = Header(None)):
+    current_user(authorization)
+    return ok({"places": places.search(q)})

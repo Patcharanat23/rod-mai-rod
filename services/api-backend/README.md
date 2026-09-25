@@ -4,7 +4,7 @@
 **ผู้รับผิดชอบ**: Karmolputh Phatarathorn (@Chakamon02)
 **branch**: `feature/api-backend/<ชื่อ>`
 **endpoint ที่ต้องมี**: ทั้งชุด api-backend ใน `docs/CONTRACT.md` หัวข้อ 6 (stub ตอนนี้ตอบครบทุกเส้นแล้ว แทนทีละเส้น)
-**เรียกใคร**: postgres, routing-engine, weather-disaster, assistant-agent, safety-knowledge
+**เรียกใคร**: postgres, routing-engine, weather-disaster, assistant-agent, safety-knowledge, Photon (ค้นสถานที่)
 **ใครเรียกเรา**: frontend, assistant-agent (เรียกกลับมาแก้ทริป)
 
 ## รันเดี่ยว
