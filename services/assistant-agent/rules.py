@@ -23,6 +23,8 @@ OTHER_NUMBER = re.compile(r"\d")
 PERIOD = re.compile(r"(?:ช่วง|ตอน)?(เช้า|บ่าย|เย็น)")
 MOVE = re.compile(r"เลื่อน|ย้าย|เปลี่ยนเวลา")
 WEATHER = re.compile(r"อากาศ|ฝน|พยากรณ์")
+# พูดถึงทริปโดยไม่บอกเลข = ทริปที่ยังไม่ถึงเวลาออกและออกเร็วที่สุด
+NEAREST = re.compile(r"ใกล้(?:ที่)?สุด|ทริป(?:ถัดไป|ต่อไป|หน้า)")
 
 Backend = Callable[..., object]
 
@@ -48,27 +50,41 @@ def parse(message: str) -> Optional[dict]:
     """แยกว่าเป็นคำสั่งแบบไหน คืน None ถ้าไม่เข้าแบบไหนเลย (ให้ LLM ตอบต่อ)"""
     m = TRIP_NO.search(message)
     trip_no = int(m.group(1)) if m else None
+    nearest = trip_no is None and bool(NEAREST.search(message))
     rest = NEXT_DAY.sub(" ", TRIP_NO.sub(" ", message))
     if MOVE.search(message) and not OTHER_NUMBER.search(rest):
         p = PERIOD.search(message)
         hour = PERIOD_HOUR[p.group(1)] if p else None
         if NEXT_DAY.search(message):
-            return {"kind": "next_day", "trip_no": trip_no, "hour": hour}
+            return {"kind": "next_day", "trip_no": trip_no, "hour": hour, "nearest": nearest}
         if hour is not None:
-            return {"kind": "period", "trip_no": trip_no, "hour": hour}
-    if WEATHER.search(message) and trip_no is not None:
-        return {"kind": "weather", "trip_no": trip_no}
+            return {"kind": "period", "trip_no": trip_no, "hour": hour, "nearest": nearest}
+    if WEATHER.search(message) and (trip_no is not None or nearest):
+        return {"kind": "weather", "trip_no": trip_no, "nearest": nearest}
     return None
 
 
-def find_trip(trip_no: Optional[int], backend: Backend, auth: str) -> tuple[Optional[dict], Optional[str]]:
-    """คืน (ทริป, None) หรือ (None, ข้อความถามกลับ) ห้ามเดาว่าผู้ใช้หมายถึงทริปไหน"""
+def departs(t: dict) -> datetime:
+    return datetime.fromisoformat(t["departure_time"].replace("Z", "+00:00"))
+
+
+def nearest_trip(trips: list[dict], now: Optional[datetime] = None) -> Optional[dict]:
+    upcoming = [t for t in trips if departs(t) > (now or datetime.now(timezone.utc))]
+    return min(upcoming, key=departs) if upcoming else None
+
+
+def find_trip(trip_no: Optional[int], backend: Backend, auth: str, nearest: bool = False,
+              now: Optional[datetime] = None) -> tuple[Optional[dict], Optional[str]]:
+    """คืน (ทริป, None) หรือ (None, ข้อความถามกลับ) ห้ามเดาว่าผู้ใช้หมายถึงทริปไหน
+    nearest = ผู้ใช้บอกชัดว่า "ทริปที่ใกล้ที่สุด" ไม่นับเป็นการเดา"""
     trips = backend("GET", "/api/v1/trips", auth)
     if not trips:
         return None, "ยังไม่มีทริปเลย สร้างทริปในหน้า My Trip ก่อนนะครับ"
     if trip_no is None:
         if len(trips) == 1:
             return trips[0], None
+        if nearest and nearest_trip(trips, now):
+            return nearest_trip(trips, now), None
         names = ", ".join(label(t["trip_no"]) for t in trips)
         return None, f"หมายถึงทริปไหนครับ ตอนนี้มี {names}"
     for t in trips:
@@ -115,7 +131,7 @@ def try_rules(message: str, auth: str, backend: Backend, now: Optional[datetime]
     if cmd is None:
         return None
     try:
-        trip, ask = find_trip(cmd["trip_no"], backend, auth)
+        trip, ask = find_trip(cmd["trip_no"], backend, auth, cmd["nearest"], now)
         if ask:
             return reply(ask)
         if cmd["kind"] == "weather":
