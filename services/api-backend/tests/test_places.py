@@ -11,7 +11,8 @@ def feature(name, lng, lat, country="TH", **props):
 
 
 @pytest.fixture(autouse=True)
-def empty_cache():
+def empty_cache(monkeypatch):
+    monkeypatch.setenv("DEMO_MODE", "false")
     places._cache.clear()
 
 

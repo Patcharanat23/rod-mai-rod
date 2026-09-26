@@ -15,8 +15,10 @@ def node(name, lat, lng, **tags):
 
 
 @pytest.fixture(autouse=True)
-def empty_cache():
+def empty_cache(monkeypatch):
+    monkeypatch.setenv("DEMO_MODE", "false")
     places._nearby_cache.clear()
+    places._nearby_pending.clear()
 
 
 @pytest.fixture
@@ -49,7 +51,9 @@ def test_one_request_with_radius_timeout_and_user_agent(overpass):
     assert "around:5000,18.79,98.98" in query
     assert "attraction|viewpoint|museum|zoo|theme_park" in query
     assert "monument|temple|ruins" in query
-    assert sent[0]["timeout"] == 8
+    # ตัวดาวน์โหลดรอ 30 วิ และบอก Overpass ให้ทำได้นานเท่ากัน ส่วนคำขอรอแค่ 8 วิ
+    assert sent[0]["timeout"] == 30
+    assert "[timeout:30]" in query
     assert "rod-mai-rod" in sent[0]["headers"]["User-Agent"]
 
 
@@ -143,3 +147,15 @@ def test_concurrent_requests_in_same_cell_call_overpass_once(overpass):
         results = list(pool.map(lambda p: places.nearby(*p), [(18.791, 98.981), (18.788, 98.979)]))
     assert len(sent) == 1
     assert results[0] == results[1]
+
+
+def test_slow_overpass_keeps_downloading_and_next_call_hits_cache(overpass, monkeypatch):
+    # ย่อเวลา: คำขอรอ 0.1 วิ แต่ Overpass ตอบใน 0.3 วิ
+    monkeypatch.setattr("places.OVERPASS_TIMEOUT", 0.1)
+    sent = overpass([node("ประตูท่าแพ", 18.7877, 98.9933, tourism="attraction")], delay=0.3)
+    with pytest.raises(ApiError) as e:
+        places.nearby(*CNX)
+    assert e.value.code == "UPSTREAM_TIMEOUT"
+    time.sleep(0.5)  # เหมือนหน้าเว็บรอแล้วลองใหม่ ระหว่างนี้ดาวน์โหลดเบื้องหลังเสร็จ
+    assert places.nearby(*CNX)[0]["name"] == "ประตูท่าแพ"
+    assert len(sent) == 1
