@@ -26,11 +26,19 @@ class ChatIn(BaseModel):
     history: list[dict] = []
 
 
-def backend(method: str, path: str, authorization: str, json=None):
+def backend(method: str, path: str, authorization: str, json=None, params=None):
     """เรียก api-backend ด้วยสิทธิ์ของผู้ใช้คนนี้เท่านั้น เช่น backend("GET", "/api/v1/trips", auth)
     ถ้า api-backend ปฏิเสธจะ raise ApiError ห้ามตอบผู้ใช้ว่าสำเร็จในกรณีนั้น"""
-    return call("API_BACKEND_URL", method, path, timeout=BACKEND_TIMEOUT, json=json,
+    return call("API_BACKEND_URL", method, path, timeout=BACKEND_TIMEOUT, json=json, params=params,
                 headers={"Authorization": authorization})
+
+
+def trips_context(authorization: str) -> str:
+    """สรุปทริปของผู้ใช้ให้ LLM ดึงไม่ได้ก็ข้ามไป LLM ยังเรียก list_trips เองได้"""
+    try:
+        return tools.context_text(backend("GET", "/api/v1/trips", authorization))
+    except ApiError:
+        return ""
 
 
 def safety_search(query: str, hazard_types: Optional[list[str]] = None) -> list[dict]:
@@ -59,4 +67,5 @@ def chat(body: ChatIn, authorization: Optional[str] = Header(None)):
     if reply is not None:
         return ok(reply)
     return ok(llm.answer(message, body.history, safety_search(message),
-                         lambda name, args: tools.run(name, args, backend, authorization)))
+                         lambda name, args: tools.run(name, args, backend, authorization),
+                         context=trips_context(authorization)))

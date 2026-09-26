@@ -29,10 +29,16 @@ SYSTEM_PROMPT = (
     "บอกระดับความเสี่ยงเป็นคำไทย (ต่ำ ปานกลาง สูง) ห้ามพิมพ์รหัสภาษาอังกฤษของระบบ "
     "ห้ามแต่งข้อมูลสภาพอากาศ ความเสี่ยง หรือเบอร์โทรเอง ถ้าไม่มีข้อมูลให้บอกตรงๆ "
     "ระดับความเสี่ยงของทริปมาจากระบบเท่านั้น คุณไม่ได้เป็นคนตัดสิน "
-    "ถ้าผู้ใช้สั่งดูหรือแก้ทริป ให้เรียก tools ที่มี ห้ามบอกว่าแก้แล้วถ้า tool ไม่ได้ตอบว่าสำเร็จ "
-    "ถ้าไม่ชัดว่าหมายถึงทริปไหน ให้ถามกลับหรือเรียก list_trips ห้ามเดา "
+    "ถ้าผู้ใช้สั่งดู สร้าง หรือแก้ทริป ให้เรียก tools ที่มี ห้ามบอกว่าทำแล้วถ้า tool ไม่ได้ตอบว่าสำเร็จ "
+    "ผู้ใช้มักพูดถึงทริปโดยไม่บอกเลข เช่น ทริปที่ใกล้ที่สุด หรือ ทริปไปเชียงใหม่ ให้เลือกเลขทริปจากข้อมูลบริบท "
+    "ถามกลับเฉพาะตอนที่ยังกำกวมจริง เช่น มีสองทริปไปที่เดียวกัน "
+    "เวลาแบบคน เช่น 12 หรือเที่ยง = 12:00 บ่ายสอง = 14:00 "
     "บอกระดับความเสี่ยงและตัวเลขอากาศตามที่ tool ตอบเท่านั้น "
-    "แชทนี้สร้างทริปใหม่หรือลบทริปไม่ได้ ถ้าผู้ใช้ขอ ให้บอกว่าทำได้ที่หน้า \"ทริปของฉัน\" "
+    "สร้างทริปใช้ create_trip ต้องรู้ต้นทาง ปลายทาง วันและเวลาออก ขาดข้อไหนให้ถามทีเดียวให้ครบ "
+    "แก้ต้นทาง ปลายทาง จุดแวะ ใช้ update_trip_places แก้เวลาใช้ update_trip_time "
+    "ขอให้แนะนำที่เที่ยว ให้เรียก nearby_places แล้วแนะนำจากผลนั้นเท่านั้น แล้วถามว่าจะให้สร้างทริปไปไหม "
+    "ถ้า nearby_places ดึงไม่ได้ ให้บอกตรงๆ ว่าตอนนี้ดึงข้อมูลไม่ได้ ห้ามแต่งชื่อสถานที่เอง "
+    "แชทนี้ลบทริปไม่ได้ ถ้าผู้ใช้ขอ ให้บอกว่าลบได้ที่หน้า \"ทริปของฉัน\" "
     "ถ้า tool ตอบ error ให้บอกเหตุผลเป็นภาษาคน เช่น วันที่ขอผ่านไปแล้ว ห้ามพูดถึงชื่อ tool หรือตัวเลขข้อจำกัดภายใน"
 )
 
@@ -69,8 +75,10 @@ def document_reply(sources: list[dict]) -> str:
     return "ข้อแนะนำจากเอกสาร:\n" + "\n\n".join(parts)
 
 
-def build_messages(message: str, history: list[dict], sources: list[dict]) -> list[dict]:
+def build_messages(message: str, history: list[dict], sources: list[dict], context: str = "") -> list[dict]:
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if context:
+        msgs.append({"role": "system", "content": context})
     if sources:
         refs = "\n".join(f"- {clean(s['snippet_th'])} (ที่มา: {s['source']})" for s in sources)
         msgs.append({"role": "system", "content": "ข้อมูลความปลอดภัยจากเอกสารที่เชื่อถือได้ ใช้ตอบและบอกที่มา:\n" + refs})
@@ -97,7 +105,11 @@ def done_reply(results: list[dict]) -> str:
     """ใช้ตอนแก้ทริปสำเร็จแล้วแต่ LLM ไม่ได้ตอบต่อ ต้องบอกผู้ใช้ว่าเกิดอะไรขึ้นจริง"""
     lines = []
     for r in results:
-        if r.get("updated"):
+        if r.get("created"):
+            lines.append(f"สร้าง {r['name']} {r['route_th']} ออก {r['departure_th']} แล้ว")
+        elif r.get("updated") and r.get("route_th"):
+            lines.append(f"แก้ {r['name']} เป็น {r['route_th']} แล้ว")
+        elif r.get("updated"):
             lines.append(f"เลื่อน {r['name']} ไปออกเดินทาง {r['departure_th']} แล้ว")
         elif r.get("planned"):
             lines.append(f"วางแผน {r['name']} ใหม่แล้ว")
@@ -173,8 +185,9 @@ def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[
     return None, unique(actions), changed
 
 
-def answer(message: str, history: list[dict], sources: list[dict], run_tool: Optional[RunTool] = None) -> dict:
-    text, actions, changed = complete(build_messages(message, history, sources), run_tool)
+def answer(message: str, history: list[dict], sources: list[dict], run_tool: Optional[RunTool] = None,
+           context: str = "") -> dict:
+    text, actions, changed = complete(build_messages(message, history, sources, context), run_tool)
     if text is not None:
         return {"reply": text, "actions": actions, "warnings": []}
     if changed:
