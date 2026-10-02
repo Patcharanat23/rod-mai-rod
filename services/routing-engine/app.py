@@ -352,8 +352,9 @@ def evaluate(routes: list[dict], timeout: float) -> Optional[dict]:
     """ส่งทุกเส้นไป risk-decision ในคำขอเดียว None = ประเมินไม่ได้"""
     try:
         return call("RISK_DECISION_URL", "POST", "/api/v1/risk/evaluate", timeout=timeout, json={
-            "routes": [{"route_id": r["route_id"], "duration_min": r["duration_min"], "points": r["points"]}
-                       for r in routes],
+            # ส่งเส้นทางทั้งเส้นไปด้วย risk-decision เช็คได้ว่าวิ่งผ่านถนนที่น้ำท่วมจริงไหม
+            "routes": [{"route_id": r["route_id"], "duration_min": r["duration_min"], "points": r["points"],
+                        "geometry": r["geometry"]} for r in routes],
         })
     except ApiError:
         return None  # ยังส่งเส้นทางกลับได้ แค่ไม่รู้ความเสี่ยง (RUNBOOK หัวข้อ C)
