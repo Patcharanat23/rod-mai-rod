@@ -133,3 +133,85 @@ def test_nearby_places_asks_again_once_after_first_timeout():
 
     out, _ = run("nearby_places", {"place": "เชียงใหม่"}, SlowOnce([]))
     assert out["places"][0]["name"] == "ประตูท่าแพ"
+
+
+def test_nearby_places_passes_style_kinds_and_radius():
+    be = PlacesBackend([])
+    run("nearby_places", {"place": "เชียงใหม่", "kinds": ["cafe", "mall"], "radius_km": 50}, be)
+    params = next(c[2] for c in be.calls if c[1] == "/api/v1/places/nearby")
+    assert params["kinds"] == "cafe,mall" and params["radius_km"] == 20
+
+
+# ---------- อากาศและภัยรอบสถานที่ (ไม่ใช่ทริป) ----------
+
+class ConditionsBackend(PlacesBackend):
+    def __init__(self, cells, hazards, warnings=()):
+        super().__init__([])
+        self.cells, self.hazards, self.warnings = cells, hazards, list(warnings)
+
+    def __call__(self, method, path, auth, json=None, params=None):
+        if path == "/api/v1/weather/area":
+            return {"center": params, "cells": self.cells, "warnings": self.warnings}
+        if path == "/api/v1/hazards":
+            self.calls.append((method, path, params))
+            return {"hazards": self.hazards, "warnings": []}
+        return super().__call__(method, path, auth, json, params)
+
+
+def cell(lat, lng, rain):
+    return {"lat": lat, "lng": lng, "forecast": {"time": "2030-01-01T05:00:00Z", "rain_mm_per_h": rain, "wind_kmh": 6,
+                                                  "temp_c": 30, "condition_th": "ฝนตก" if rain else "ท้องฟ้าโปร่ง"}}
+
+
+def hazard(hid, lat, lng, **extra):
+    return {"hazard_id": hid, "hazard_type": "FLOOD", "severity": "HIGH", "lat": lat, "lng": lng,
+            "title_th": f"น้ำท่วม {hid}", "source": "GISTDA", **extra}
+
+
+def test_place_conditions_reports_weather_rain_and_nearby_hazards_only():
+    be = ConditionsBackend(
+        [cell(15.7, 100.14, 0), cell(15.9, 100.3, 12.5), cell(15.5, 100.0, 0)],
+        [hazard("road", 15.75, 100.2, road_cells=[[15.71, 100.15]]),
+         hazard("fields", 15.72, 100.1, road_cells=[]),
+         hazard("far", 17.0, 101.0),
+         {**hazard("now", 15.7, 100.14), "hazard_type": "RAIN", "source": "OPEN_METEO"}])
+    out, actions = run("place_conditions", {"place": "นครสวรรค์"}, be)
+    assert actions == [] and out["place"] == "นครสวรรค์"
+    assert out["weather_now"]["condition_th"] == "ท้องฟ้าโปร่ง" and out["weather_now"]["time_th"] == "1 ม.ค. 12:00 น."
+    assert out["rain_around_th"].startswith("ฝนตก 1 จาก 3 จุด") and "12.5 มม./ชม." in out["rain_around_th"]
+    assert [h["title_th"] for h in out["hazards"]] == ["น้ำท่วม fields", "น้ำท่วม road"]  # เรียงใกล้ไปไกล ตัดที่ไกลและฝนตอนนี้
+    assert out["hazards"][0]["flooded_road_th"] == "ท่วมพื้นที่เกษตร ไม่มีถนนท่วม"
+    assert out["hazards"][1]["flooded_road_th"].startswith("ถนนที่ท่วมใกล้สุดห่าง 1.")
+    assert out["hazards"][1]["severity_th"] == "สูง" and out["hazards_th"] == "มีภัย 2 จุดในรัศมี 30 กม."
+
+
+def test_place_conditions_says_so_when_weather_is_unavailable():
+    out, _ = run("place_conditions", {"place": "นครสวรรค์"}, ConditionsBackend([], [], ["WEATHER_UNAVAILABLE"]))
+    assert out["weather_now"] == "ดึงข้อมูลอากาศไม่ได้ตอนนี้" and out["warnings"] == ["WEATHER_UNAVAILABLE"]
+    assert out["hazards"] == [] and out["hazards_th"] == "ไม่มีภัยในรัศมี 30 กม."
+
+
+def test_place_conditions_asks_again_for_unknown_place():
+    out, _ = run("place_conditions", {"place": "ไม่มีที่นี่"}, ConditionsBackend([], []))
+    assert "ไม่เจอ" in out["error"]
+
+
+# ---------- เบอร์ฉุกเฉินจากระบบเท่านั้น ----------
+
+class SafetyBackend(PlacesBackend):
+    def __call__(self, method, path, auth, json=None, params=None):
+        if path == "/api/v1/safety/emergency":
+            self.calls.append((method, path, params))
+            return {"hazard_type": params["hazard_type"], "steps_th": ["ห้ามขับผ่านน้ำสูง"],
+                    "contacts": [{"name_th": "เจ็บป่วยฉุกเฉิน", "phone": "1669"}]}
+        return super().__call__(method, path, auth, json, params)
+
+
+def test_emergency_info_gives_only_system_numbers():
+    be = SafetyBackend([])
+    out, actions = run("emergency_info", {}, be)
+    assert out["contacts"] == [{"name_th": "เจ็บป่วยฉุกเฉิน", "phone": "1669"}] and "steps_th" not in out and actions == []
+    out, _ = run("emergency_info", {"hazard_type": "FLOOD"}, be)
+    assert out["steps_th"] == ["ห้ามขับผ่านน้ำสูง"]
+    run("emergency_info", {"hazard_type": "ZOMBIE"}, be)  # ชนิดแปลกไม่ส่งต่อ ใช้แค่เบอร์
+    assert be.calls[-1][2] == {"hazard_type": "FLOOD"}

@@ -3,6 +3,7 @@
 LLM ส่งแค่ trip_no และเวลาแบบคน (เลื่อนกี่วัน / กี่ชั่วโมง / กี่โมงตามเวลาไทย) การคิดวันที่และแปลง UTC ทำในโค้ดนี้
 ตัวเลขอากาศและระดับความเสี่ยงที่คืนให้ LLM มาจากระบบทั้งหมด
 """
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -10,6 +11,8 @@ from typing import Optional
 from envelope import ApiError
 from rules import BANGKOK, RISK_TH, Backend, departs, find_trip, label, nearest_trip, thai_time, to_utc_iso
 
+EMERGENCY_TYPES = {"RAIN", "HEAVY_RAIN", "STRONG_WIND", "FLOOD", "LANDSLIDE_RISK", "STORM", "EARTHQUAKE"}  # CONTRACT หัวข้อ 4
+ZERO_WIDTH = re.compile(r"[​-‍﻿]")  # ชื่อใน OSM บางชื่อมีอักขระล่องหน ทำให้โมเดลพิมพ์เพี้ยน
 HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 YMD = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 MAX_SHIFT_DAYS = 14
@@ -51,9 +54,22 @@ SCHEMAS = [
     }},
     {"type": "function", "function": {
         "name": "nearby_places",
-        "description": "สถานที่เที่ยวจริงรอบสถานที่หนึ่ง (รัศมี 5 กม.) ใช้ตอนผู้ใช้ขอให้แนะนำที่เที่ยว แนะนำจากผลนี้",
+        "description": "สถานที่จริงรอบสถานที่หนึ่ง (OpenStreetMap) ใช้ตอนผู้ใช้ขอให้แนะนำที่เที่ยว แนะนำจากผลนี้ "
+                       "เลือก kinds ตามแนวที่ผู้ใช้อยากได้",
         "parameters": {"type": "object", "properties": {
             "place": {"type": "string", "description": "ชื่อสถานที่หรือเมือง เช่น เชียงใหม่"},
+            "kinds": {"type": "array", "items": {"type": "string", "enum": ["attraction", "cafe", "market", "park", "mall", "nightlife", "waterfall"]},
+                      "description": "attraction = วัด พิพิธภัณฑ์ อนุสาวรีย์ จุดชมวิว (ค่าเริ่มต้น), cafe = คาเฟ่, market = ตลาด ถนนคนเดิน, "
+                                     "park = สวนสาธารณะ, mall = ห้าง, nightlife = บาร์ ผับ, waterfall = น้ำตก เช่น แนววัยรุ่น = cafe, market, mall, nightlife แนวธรรมชาติ = park, waterfall"},
+            "radius_km": {"type": "integer", "description": "รัศมี 1-20 กม. ทั้งเมืองใช้ 15 ไม่ส่ง = 5"},
+        }, "required": ["place"]},
+    }},
+    {"type": "function", "function": {
+        "name": "place_conditions",
+        "description": "อากาศตอนนี้ ฝน และภัย (น้ำท่วม พายุ แผ่นดินไหว) รอบสถานที่หรือจังหวัดที่ไม่ใช่ทริป "
+                       "ใช้ตอนผู้ใช้ถาม เช่น สระบุรีฝนตกไหม น้ำท่วมไหม ถ้าถามถึงทริปใช้ get_trip_weather",
+        "parameters": {"type": "object", "properties": {
+            "place": {"type": "string", "description": "ชื่อสถานที่หรือจังหวัด เช่น สระบุรี"},
         }, "required": ["place"]},
     }},
     {"type": "function", "function": {
@@ -66,6 +82,14 @@ SCHEMAS = [
             "time": {"type": "string", "description": "เวลาออกตามเวลาไทย HH:MM"},
             "stops": {"type": "array", "items": {"type": "string"}, "description": "จุดแวะตามลำดับ ไม่เกิน 5 จุด"},
         }, "required": ["origin", "destination", "date", "time"]},
+    }},
+    {"type": "function", "function": {
+        "name": "emergency_info",
+        "description": "เบอร์โทรฉุกเฉินและขั้นตอนรับมือภัยจากระบบ ใช้ทุกครั้งที่ผู้ใช้ถามเบอร์ฉุกเฉินหรือต้องบอกเบอร์โทร",
+        "parameters": {"type": "object", "properties": {
+            "hazard_type": {"type": "string", "enum": sorted(EMERGENCY_TYPES),
+                            "description": "ชนิดภัยที่ถาม ไม่รู้หรือถามแค่เบอร์ ไม่ต้องส่ง"},
+        }},
     }},
     {"type": "function", "function": {
         "name": "update_trip_places",
@@ -230,6 +254,10 @@ def nearby_places(args: dict, backend: Backend, auth: str) -> tuple[dict, list]:
     if err:
         return {"error": err}, []
     params = {"lat": place["lat"], "lng": place["lng"]}
+    if args.get("kinds"):
+        params["kinds"] = ",".join(args["kinds"])
+    if args.get("radius_km"):
+        params["radius_km"] = max(1, min(20, int(args["radius_km"])))
     try:
         found = backend("GET", "/api/v1/places/nearby", auth, params=params)["places"]
     except ApiError as e:
@@ -237,7 +265,72 @@ def nearby_places(args: dict, backend: Backend, auth: str) -> tuple[dict, list]:
             raise
         # ครั้งแรกของพื้นที่ใหม่ api-backend ตอบไม่ทันแต่โหลดต่อเบื้องหลัง ถามซ้ำอีกครั้งมักได้แล้ว
         found = backend("GET", "/api/v1/places/nearby", auth, params=params)["places"]
-    return {"around": place["name"], "places": [{"name": p["name"], "kind_th": p.get("kind_th")} for p in found]}, []
+    return {"around": place["name"], "places": [{"name": ZERO_WIDTH.sub("", p["name"]).strip(), "kind_th": p.get("kind_th")}
+                                                for p in found]}, []
+
+
+def emergency_info(args: dict, backend: Backend, auth: str) -> tuple[dict, list]:
+    """เบอร์จากระบบเท่านั้น โมเดลเคยแต่งเบอร์เอง (1669 = สุขภาพจิต) ซึ่งอันตราย"""
+    hazard = args.get("hazard_type") if args.get("hazard_type") in EMERGENCY_TYPES else None
+    data = backend("GET", "/api/v1/safety/emergency", auth, params={"hazard_type": hazard or "FLOOD"})
+    out = {"contacts": data.get("contacts", []), "note": "บอกเฉพาะเบอร์ในรายการนี้ ห้ามเพิ่มเบอร์อื่น"}
+    if hazard:
+        out["steps_th"] = data.get("steps_th", [])
+    return out, []
+
+
+HAZARD_KM = 30  # ภัยที่นับว่า "รอบสถานที่"
+HAZARD_TYPE_TH = {"FLOOD": "น้ำท่วม", "STORM": "พายุ", "EARTHQUAKE": "แผ่นดินไหว", "LANDSLIDE": "ดินถล่ม",
+                  "HEAVY_RAIN": "ฝนหนัก", "RAIN": "ฝน", "STRONG_WIND": "ลมแรง"}
+
+
+def km(a: dict, b: dict) -> float:
+    dlat, dlng = math.radians(b["lat"] - a["lat"]), math.radians(b["lng"] - a["lng"])
+    h = math.sin(dlat / 2) ** 2 + math.cos(math.radians(a["lat"])) * math.cos(math.radians(b["lat"])) * math.sin(dlng / 2) ** 2
+    return 6371 * 2 * math.asin(math.sqrt(h))
+
+
+def place_conditions(args: dict, backend: Backend, auth: str) -> tuple[dict, list]:
+    """อากาศตอนนี้ของจุดใกล้สุด + ฝนในตาราง ~25 กม. (/weather/area) + ภัยไม่เกิน HAZARD_KM (/hazards)"""
+    place, err = resolve_place(args.get("place"), backend, auth)
+    if err:
+        return {"error": err}, []
+    out: dict = {"place": place["name"], "note": "เป็นข้อมูลตอนนี้ ไม่ใช่พยากรณ์ล่วงหน้า"}
+    area = backend("GET", "/api/v1/weather/area", auth, params={"lat": place["lat"], "lng": place["lng"]})
+    cells = [c for c in area.get("cells", []) if c.get("forecast")]
+    if cells:
+        here = min(cells, key=lambda c: km(place, c))["forecast"]
+        raining = [c["forecast"]["rain_mm_per_h"] for c in cells if c["forecast"]["rain_mm_per_h"] > 0]
+        out["weather_now"] = {"time_th": thai_time(here["time"]), "condition_th": here["condition_th"],
+                              "temp_c": here["temp_c"], "rain_mm_per_h": here["rain_mm_per_h"], "wind_kmh": here["wind_kmh"]}
+        out["rain_around_th"] = (f"ฝนตก {len(raining)} จาก {len(cells)} จุดรอบๆ (รัศมีราว 25 กม.) หนักสุด {max(raining)} มม./ชม."
+                                 if raining else f"ไม่มีฝนทั้ง {len(cells)} จุดรอบๆ (รัศมีราว 25 กม.)")
+    else:
+        out["weather_now"] = "ดึงข้อมูลอากาศไม่ได้ตอนนี้"
+    d = HAZARD_KM / 111 + 0.05
+    feed = backend("GET", "/api/v1/hazards", auth, params={"min_lat": place["lat"] - d, "min_lng": place["lng"] - d,
+                                                           "max_lat": place["lat"] + d, "max_lng": place["lng"] + d})
+    found = []
+    for h in feed.get("hazards", []):
+        if h.get("source") == "OPEN_METEO":  # ฝน/ลมตอนนี้ นับจาก weather_now แล้ว
+            continue
+        dist = km(place, h)
+        if dist > HAZARD_KM:
+            continue
+        item = {"title_th": h.get("title_th"), "type_th": HAZARD_TYPE_TH.get(h.get("hazard_type"), h.get("hazard_type")),
+                "severity_th": RISK_TH.get(h.get("severity"), "ไม่ทราบ"), "distance_km": round(dist, 1)}
+        roads = h.get("road_cells")
+        if roads is not None:
+            item["flooded_road_th"] = (f"ถนนที่ท่วมใกล้สุดห่าง {min(km(place, {'lat': r[0], 'lng': r[1]}) for r in roads):.1f} กม."
+                                       if roads else "ท่วมพื้นที่เกษตร ไม่มีถนนท่วม")
+        found.append(item)
+    found.sort(key=lambda x: x["distance_km"])
+    out["hazards"] = found[:6]
+    out["hazards_th"] = f"มีภัย {len(found)} จุดในรัศมี {HAZARD_KM} กม." if found else f"ไม่มีภัยในรัศมี {HAZARD_KM} กม."
+    warnings = [*area.get("warnings", []), *feed.get("warnings", [])]
+    if warnings:
+        out["warnings"] = warnings
+    return out, []
 
 
 def create_trip(args: dict, backend: Backend, auth: str, now: Optional[datetime] = None) -> tuple[dict, list]:
@@ -286,7 +379,7 @@ def update_trip_places(args: dict, backend: Backend, auth: str) -> tuple[dict, l
 
 HANDLERS = {"list_trips": list_trips, "update_trip_time": update_trip_time,
             "plan_trip": plan_trip, "get_trip_weather": get_trip_weather,
-            "nearby_places": nearby_places, "create_trip": create_trip, "update_trip_places": update_trip_places}
+            "nearby_places": nearby_places, "place_conditions": place_conditions, "emergency_info": emergency_info, "create_trip": create_trip, "update_trip_places": update_trip_places}
 
 
 def run(name: str, args: dict, backend: Backend, auth: str) -> tuple[dict, list]:

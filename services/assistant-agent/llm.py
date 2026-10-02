@@ -22,9 +22,15 @@ TOOL_MIN_TIME = 45  # ต้องเหลือเวลาพอให้ /pl
 
 RunTool = Callable[[str, Optional[dict]], tuple[dict, list]]
 
+BOT_NAME = "น้องกิเลน"  # ชื่อมาสคอต เปลี่ยนที่นี่ที่เดียว (หน้าเว็บใช้ชื่อเดียวกัน)
+
 SYSTEM_PROMPT = (
-    "คุณคือผู้ช่วยวางแผนเที่ยวในประเทศไทยของเว็บ rod-mai-rod "
+    f"คุณชื่อ{BOT_NAME} มาสคอตกิเลนของเว็บรอดไม่รอด ผู้ช่วยวางแผนเที่ยวในประเทศไทยให้ปลอดภัย "
+    f"แทนตัวเองว่า{BOT_NAME}หรือผม เป็นกันเอง ใจดี ถ้าผู้ใช้ถามชื่อหรือถามว่าเป็นใคร ให้แนะนำตัวว่าเป็น{BOT_NAME} "
+    f"ถ้าผู้ใช้เรียกด้วยชื่ออื่น ให้บอกสุภาพว่าตัวเองชื่อ{BOT_NAME} "
+    "ตอบภาษาอังกฤษให้ใช้ชื่อ Nong Qilin มาสคอต qilin ของเว็บ Rod Mai Rod "
     "ตอบสั้น กระชับ ไม่เกิน 5 บรรทัด เป็นภาษาเดียวกับที่ผู้ใช้พิมพ์ (ส่วนใหญ่คือภาษาไทย) ภาษาไทยลงท้ายด้วยครับ "
+    "ถ้าข้อความล่าสุดของผู้ใช้เป็นภาษาอังกฤษ ให้ตอบเป็นภาษาอังกฤษทั้งข้อความ แม้ข้อมูลจาก tool จะเป็นภาษาไทย "
     "หน้าแชทแสดงข้อความธรรมดา ห้ามใช้ markdown เช่น ** หรือ # ใช้ขีด - นำหน้าข้อได้ "
     "บอกระดับความเสี่ยงเป็นคำไทย (ต่ำ ปานกลาง สูง) ห้ามพิมพ์รหัสภาษาอังกฤษของระบบ "
     "ห้ามแต่งข้อมูลสภาพอากาศ ความเสี่ยง หรือเบอร์โทรเอง ถ้าไม่มีข้อมูลให้บอกตรงๆ "
@@ -36,7 +42,15 @@ SYSTEM_PROMPT = (
     "บอกระดับความเสี่ยงและตัวเลขอากาศตามที่ tool ตอบเท่านั้น "
     "สร้างทริปใช้ create_trip ต้องรู้ต้นทาง ปลายทาง วันและเวลาออก ขาดข้อไหนให้ถามทีเดียวให้ครบ "
     "แก้ต้นทาง ปลายทาง จุดแวะ ใช้ update_trip_places แก้เวลาใช้ update_trip_time "
+    "ถามว่าที่ไหนฝนตก น้ำท่วม หรือมีภัยไหม (ไม่ใช่ทริป) ให้เรียก place_conditions แล้วตอบตามผลนั้น บอกด้วยว่าเป็นข้อมูลตอนนี้ "
+    "ถ้าถามอากาศล่วงหน้า เช่น พรุ่งนี้ หรือเสาร์อาทิตย์นี้ ให้บอกตรงๆ ว่าดูได้แค่ตอนนี้ แล้วเสนอสร้างทริปเพื่อดูพยากรณ์ตามเวลาที่ไปถึง "
+    "ถามเบอร์โทรฉุกเฉินหรือต้องบอกเบอร์โทร ให้เรียก emergency_info แล้วบอกเฉพาะเบอร์ที่ได้ ห้ามบอกเบอร์จากความจำ "
+    "ห้ามเดาระยะทางหรือเวลาขับรถระหว่างเมือง ให้เสนอสร้างทริปเพื่อให้ระบบคำนวณเส้นทางจริง "
+    "เรื่องที่ไม่เกี่ยวกับการเดินทางในไทย เช่น เขียนโค้ด ทำการบ้าน ให้ปฏิเสธสุภาพสั้นๆ แล้วบอกว่าช่วยอะไรได้บ้าง "
     "ขอให้แนะนำที่เที่ยว ให้เรียก nearby_places แล้วแนะนำจากผลนั้นเท่านั้น แล้วถามว่าจะให้สร้างทริปไปไหม "
+    "คำถามต่อที่ต้องบอกชื่อสถานที่ เช่น แล้วคาเฟ่ล่ะ หรือ ที่ไหนเหมาะกับเด็ก ให้เรียก nearby_places ใหม่ทุกครั้ง "
+    "ใช้เมืองเดิมจากบทสนทนาและ kinds ที่ตรงคำถาม ห้ามเอาชื่อสถานที่จากความจำหรือจากคำตอบก่อนหน้า ห้ามบอกชื่อเดียวกันซ้ำ "
+    "ถ้าผู้ใช้บอกแนว เช่น วัยรุ่น ชิลๆ ช้อปปิ้ง กินดื่ม ธรรมชาติ ให้ส่ง kinds ให้ตรงแนว และใช้ radius_km 15 เมื่อถามทั้งเมือง "
     "ถ้า nearby_places ดึงไม่ได้ ให้บอกตรงๆ ว่าตอนนี้ดึงข้อมูลไม่ได้ ห้ามแต่งชื่อสถานที่เอง "
     "แชทนี้ลบทริปไม่ได้ ถ้าผู้ใช้ขอ ให้บอกว่าลบได้ที่หน้า \"ทริปของฉัน\" "
     "ถ้า tool ตอบ error ให้บอกเหตุผลเป็นภาษาคน เช่น วันที่ขอผ่านไปแล้ว ห้ามพูดถึงชื่อ tool หรือตัวเลขข้อจำกัดภายใน"
@@ -49,9 +63,9 @@ FALLBACK_REPLY = (
 
 
 def providers() -> list[dict]:
-    """ผู้ให้บริการตามลำดับ LLM_PRIMARY แล้ว LLM_FALLBACK ข้ามตัวที่ยังไม่ได้ใส่ key หรือชื่อโมเดล"""
+    """ผู้ให้บริการตามลำดับ LLM_PRIMARY แล้ว LLM_FALLBACK (ใส่หลายตัวคั่นด้วย , ได้) ข้ามตัวที่ยังไม่ได้ใส่ key หรือชื่อโมเดล"""
     out = []
-    for name in (os.getenv("LLM_PRIMARY", ""), os.getenv("LLM_FALLBACK", "")):
+    for name in [os.getenv("LLM_PRIMARY", ""), *os.getenv("LLM_FALLBACK", "").split(",")]:
         prefix = name.strip().upper()
         if not prefix:
             continue
@@ -76,12 +90,14 @@ def document_reply(sources: list[dict]) -> str:
 
 
 def build_messages(message: str, history: list[dict], sources: list[dict], context: str = "") -> list[dict]:
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # รวมเป็น system ข้อความเดียว: Gemini ใช้แค่ system อันสุดท้าย ถ้าแยกหลายอันคำสั่งหลัก (ชื่อ กฎห้ามแต่ง) จะหาย
+    system = [SYSTEM_PROMPT]
     if context:
-        msgs.append({"role": "system", "content": context})
+        system.append(context)
     if sources:
         refs = "\n".join(f"- {clean(s['snippet_th'])} (ที่มา: {s['source']})" for s in sources)
-        msgs.append({"role": "system", "content": "ข้อมูลความปลอดภัยจากเอกสารที่เชื่อถือได้ ใช้ตอบและบอกที่มา:\n" + refs})
+        system.append("ข้อมูลความปลอดภัยจากเอกสารที่เชื่อถือได้ ใช้ตอบและบอกที่มา:\n" + refs)
+    msgs = [{"role": "system", "content": "\n\n".join(system)}]
     for h in history[-HISTORY_LIMIT:]:
         if h.get("role") in ("user", "assistant") and isinstance(h.get("content"), str):
             msgs.append({"role": h["role"], "content": h["content"]})
@@ -91,14 +107,33 @@ def build_messages(message: str, history: list[dict], sources: list[dict], conte
 
 def plain(text: str) -> str:
     """หน้าแชทแสดงข้อความธรรมดา โมเดลบางตัวยังใส่ markdown มาแม้สั่งห้าม ตัดทิ้งก่อนส่ง"""
-    text = re.sub(r"\*\*|__|`", "", text)
-    return re.sub(r"^\s*#+\s*", "", text, flags=re.MULTILINE).strip()
+    text = re.sub(r"\*\*|__|`|[​-‍﻿]", "", text)  # อักขระล่องหนติดมากับชื่อใน OSM
+    text = re.sub(r"^(\s*)[*•]\s+", r"\1- ", text, flags=re.MULTILINE)  # Gemini ใช้ * เป็นหัวข้อย่อย
+    text = text.replace("*", "")  # ตัวเอียง *(หมายเหตุ)* ที่เหลือ
+    text = re.sub(r"^\s*#+\s*", "", text, flags=re.MULTILINE).strip()
+    # บางครั้งโมเดลวนพิมพ์บรรทัดเดิมซ้ำ (เช่นชื่อร้านเดียว 10 บรรทัด) เก็บไว้แค่ครั้งแรก
+    seen: set[str] = set()
+    lines = []
+    for line in text.split("\n"):
+        key = line.strip()
+        if key and key in seen:
+            continue
+        seen.add(key)
+        lines.append(line)
+    text = re.sub(r"\n\s*-{3,}\s*$", "", "\n".join(lines))  # เส้นคั่นค้างท้ายข้อความ
+    return re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", text).strip()  # บรรทัดว่างติดกันเหลือบรรทัดเดียว
 
 
 def tool_call_message(msg) -> dict:
-    return {"role": "assistant", "content": msg.content or "", "tool_calls": [
-        {"id": c.id, "type": "function", "function": {"name": c.function.name, "arguments": c.function.arguments}}
-        for c in msg.tool_calls]}
+    calls = []
+    for c in msg.tool_calls:
+        call = {"id": c.id, "type": "function", "function": {"name": c.function.name, "arguments": c.function.arguments}}
+        # Gemini 3 ต้องได้ thought_signature ใน extra_content คืนไปด้วย ไม่งั้นรอบถัดไปตอบ 400
+        extra = getattr(c, "extra_content", None)
+        if extra:
+            call["extra_content"] = extra
+        calls.append(call)
+    return {"role": "assistant", "content": msg.content or "", "tool_calls": calls}
 
 
 def done_reply(results: list[dict]) -> str:
@@ -137,6 +172,17 @@ def unique(actions: list[dict]) -> list[dict]:
     return out
 
 
+# คำถามต่อ เช่น "แล้วคาเฟ่ล่ะ" โมเดลบางทีตอบรายชื่อร้านจากความจำโดยไม่เรียก tool (ได้ชื่อมั่ว/ซ้ำ)
+PLACE_ASK = re.compile(r"คาเฟ่|ร้าน|ที่เที่ยว|เที่ยว|ตลาด|ห้าง|สวน|ผับ|บาร์|น้ำตก|แนะนำ|ที่ไหน|แวะ")
+LOOKUP_NUDGE = ("คำตอบก่อนหน้ามีรายชื่อสถานที่ที่ไม่ได้มาจาก tool ให้เรียก nearby_places (หรือ tool ที่ตรงคำถาม) ก่อน "
+                "แล้วตอบจากผลนั้นเท่านั้น")
+
+
+def unsourced_places(text: str, question: str) -> bool:
+    """ตอบเป็นรายการชื่อสถานที่ 2 ข้อขึ้นไป ทั้งที่รอบนี้ยังไม่ได้เรียก tool"""
+    return bool(PLACE_ASK.search(question)) and sum(bool(re.match(r"\s*([-*•]|\d+[.)])\s", l)) for l in text.split("\n")) >= 2
+
+
 def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[Optional[str], list, list]:
     """ลองตัวหลักก่อน ล่ม / 429 / โมเดลถูกถอด ค่อยลองตัวสำรอง
     คืน (ข้อความ หรือ None ถ้าล่มหมด, actions, ผลของ tools ที่แก้ข้อมูลสำเร็จ)"""
@@ -145,6 +191,7 @@ def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[
     changed: list[dict] = []
     for p in providers():
         convo = list(messages)
+        used_tool = nudged = False
         try:
             client = OpenAI(api_key=p["api_key"], base_url=p["base_url"], timeout=LLM_TIMEOUT, max_retries=0)
             extra = {"tools": tools.SCHEMAS} if run_tool else {}
@@ -157,10 +204,15 @@ def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[
                 msg = res.choices[0].message
                 if not getattr(msg, "tool_calls", None):
                     text = plain(msg.content or "")
+                    if text and run_tool and not used_tool and not nudged and unsourced_places(msg.content or "", messages[-1]["content"]):
+                        nudged = True
+                        convo.append({"role": "user", "content": LOOKUP_NUDGE})  # Qwen ไม่ค่อยฟัง system กลางบทสนทนา
+                        continue
                     if text:
                         return text, unique(actions), changed
                     break
                 convo.append(tool_call_message(msg))
+                used_tool = True
                 for c in msg.tool_calls:
                     if deadline - time.monotonic() < TOOL_MIN_TIME:
                         result, acts = {"error": "หมดเวลา ให้ผู้ใช้ลองใหม่อีกครั้ง"}, []
