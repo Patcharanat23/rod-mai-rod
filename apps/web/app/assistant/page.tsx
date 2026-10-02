@@ -1,187 +1,167 @@
 "use client";
 
-// โมดูล 3 อ่าน app/assistant/README.md ก่อน จุดที่ต้องเติมมี TODO(web-safety-assistant)
+// หน้าคุยกับน้องกิเลนแบบเต็มหน้า ใช้บทสนทนาเดียวกับแชทลอย (lib/chat.tsx)
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import Warnings from "@/shared/Warnings";
-import { api, ApiError } from "@/shared/api";
-import type { ChatAction, ChatMessage, ChatReply } from "@/shared/types";
+import Icon from "@/components/Icon";
+import { Topbar } from "@/components/Shell";
+import { Composer, MessageList } from "@/components/ChatDrawer";
+import { RiskChip } from "@/components/ui";
+import { RECO, thaiDateTime } from "@/lib/data";
+import { useApp } from "@/lib/store";
+import { chatSuggestions, chatWhen, useChat } from "@/lib/chat";
 
-const HISTORY_LIMIT = 10;
-
-// ปุ่มคำถามตัวอย่างสำหรับสาธิต (README ข้อ 7)
-const SAMPLE_PROMPTS = [
-  "ช่วงนี้เที่ยวที่ไหนดี",
-  "เลื่อน Trip 01 ไปวันถัดไป",
-  "Trip 01 อากาศเป็นยังไง",
-  "น้ำท่วมระหว่างทางต้องทำยังไง",
+// ตัวอย่างสิ่งที่น้องกิเลนทำได้ แสดงตอนเริ่มบทสนทนาใหม่
+const CAN_DO = [
+  { icon: "edit", title: "สร้าง แก้ ลบทริปด้วยคำพูด", ex: "\"ไปเชียงใหม่วันเสาร์ 8 โมงเช้า\"" },
+  { icon: "clock", title: "เช็กอากาศ ณ เวลาที่ไปถึง", ex: "\"Trip 01 ถึงนครสวรรค์ฝนตกไหม\"" },
+  { icon: "spark", title: "หาเวลาออกที่ปลอดภัยกว่า", ex: "\"ออกกี่โมงดีที่สุด\"" },
+  { icon: "shield", title: "วิธีรับมือภัยระหว่างทาง", ex: "\"รถดับกลางน้ำทำยังไง\"" },
 ];
 
-// คำสั่งแบบกฎตายตัวของ assistant-agent ใช้ได้แม้ LLM ล่ม (README ข้อ 6)
-const OFFLINE_COMMANDS = ["เลื่อน Trip 01 ไปวันถัดไป", "เลื่อน Trip 01 เป็นช่วงเช้า", "Trip 01 อากาศเป็นยังไง"];
-
-const ACTION_TEXT: Record<ChatAction["type"], string> = {
-  TRIP_CREATED: "ถูกสร้างแล้ว",
-  TRIP_UPDATED: "ถูกแก้แล้ว",
-  TRIP_DELETED: "ถูกลบแล้ว",
-};
-
-const BUBBLE_STYLE = {
-  user: { background: "var(--grad)", color: "#fff" },
-  assistant: { background: "#f3f4f6", color: "#1f2937" },
-} as const;
-
-const AVATAR_SRC = "/mascot/nong-taem-avatar.png";
-
-// actions เก็บไว้แสดงการ์ดเท่านั้น ไม่ส่งกลับไปใน history
-type Message = ChatMessage & { actions?: ChatAction[] };
-
-function tripLabel(no: number) {
-  return `Trip ${String(no).padStart(2, "0")}`;
-}
-
-function ActionCards({ actions }: { actions: ChatAction[] }) {
-  const known = actions.filter((a) => a.type in ACTION_TEXT);
-  if (!known.length) return null;
-  return (
-    <div style={{ display: "grid", gap: 6, margin: "4px 0 12px" }}>
-      {known.map((a, i) => (
-        <div
-          key={`${a.trip_id}-${a.type}-${i}`}
-          className="row"
-          style={{ justifyContent: "space-between", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 6, padding: "8px 12px" }}
-        >
-          <span>
-            {tripLabel(a.trip_no)} {ACTION_TEXT[a.type]}
-          </span>
-          <Link href="/my-trip" className="btn btn-outline" style={{ padding: "4px 10px", fontSize: 14 }}>
-            ไปที่ My Trip
-          </Link>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export default function AssistantPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [lastReply, setLastReply] = useState<ChatReply | null>(null);
-  // กันกด Enter รัวๆ ก่อน state busy อัปเดตทัน
-  const sending = useRef(false);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  // เลื่อนลงล่างสุดเมื่อมีข้อความใหม่หรือเริ่มรอคำตอบ
-  useEffect(() => {
-    const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, busy]);
-
-  async function send(text: string) {
-    if (!text.trim() || sending.current) return;
-    sending.current = true;
-    const history: ChatMessage[] = messages.slice(-HISTORY_LIMIT).map(({ role, content }) => ({ role, content }));
-    setMessages([...messages, { role: "user", content: text }]);
-    setInput("");
-    setBusy(true);
-    try {
-      const reply = await api<ChatReply>("/assistant/chat", { method: "POST", body: { message: text, history } });
-      setLastReply(reply);
-      setMessages((m) => [...m, { role: "assistant", content: reply.reply, actions: reply.actions ?? [] }]);
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "ส่งข้อความไม่สำเร็จ";
-      setMessages((m) => [...m, { role: "assistant", content: msg }]);
-    } finally {
-      sending.current = false;
-      setBusy(false);
-    }
-  }
+export default function Assistant() {
+  const { msgs, busy, send, reset, cancel, history, currentId, open, remove } = useChat();
+  const { nextTrip } = useApp();
+  const tripNo = nextTrip ? `Trip ${String(nextTrip.trip_no).padStart(2, "0")}` : null;
+  const ideas = chatSuggestions(tripNo);
+  const fresh = msgs.length <= 1;
 
   return (
-    <div className="card" style={{ maxWidth: 760, margin: "0 auto" }}>
-      <h3 className="row" style={{ gap: 10 }}>
-        <img src={AVATAR_SRC} alt="" width={40} height={40} style={{ borderRadius: "50%", objectFit: "cover" }} />
-        คุยกับน้องแต้ม
-      </h3>
-      <Warnings warnings={lastReply?.warnings} />
-      {lastReply?.warnings?.includes("LLM_UNAVAILABLE") && (
-        <div className="card" style={{ marginBottom: 12, background: "#f9fafb" }}>
-          <div className="muted" style={{ marginBottom: 8 }}>
-            ระบบยังทำงานอยู่ ลองใช้คำสั่งเหล่านี้ได้เลย
-          </div>
-          <div className="row">
-            {OFFLINE_COMMANDS.map((c) => (
-              <button key={c} className="btn" style={{ fontSize: 14 }} onClick={() => send(c)} disabled={busy}>
-                {c}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div
-        ref={listRef}
-        style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 300, maxHeight: 480, overflowY: "auto", marginBottom: 12 }}
-      >
-        {messages.length === 0 && !busy && <p className="muted">ลองกดคำถามตัวอย่างด้านล่าง หรือพิมพ์คำถามเอง</p>}
-        {messages.map((m, i) => (
-          <div key={i} style={{ display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                display: "flex",
-                gap: 8,
-                alignItems: "flex-end",
-                maxWidth: "85%",
-              }}
-            >
-              {m.role === "assistant" && (
-                <img src={AVATAR_SRC} alt="น้องแต้ม" width={32} height={32} style={{ borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
-              )}
-              {/* แสดงเป็นข้อความธรรมดา ห้ามใช้ dangerouslySetInnerHTML (README ข้อ 4) */}
-              <div
-                style={{
-                  ...BUBBLE_STYLE[m.role],
-                  padding: "8px 12px",
-                  borderRadius: 12,
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  minWidth: 0,
-                }}
-              >
-                {m.content}
-              </div>
+    <>
+      <Topbar title="คุยกับน้องกิเลน" sub="ผู้ช่วยวางแผนเดินทาง ตอบจากทริปของคุณและข้อมูลความเสี่ยงจริง" />
+      <div className="assist">
+        <section className="card assist-chat">
+          <header className="assist-head">
+            <span className="avatar-online big">
+              <img src="/assets/shared/qilin-avatar.webp" alt="" />
+            </span>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <h3>น้องกิเลน</h3>
+              <p className="tiny muted">{busy ? "กำลังพิมพ์..." : "พร้อมช่วยแล้ว"}</p>
             </div>
-            {m.actions && <ActionCards actions={m.actions} />}
+            <button className="btn sm ghost" onClick={reset} disabled={fresh || busy} title="ลบบทสนทนานี้แล้วเริ่มใหม่">
+              <Icon name="plus" size={15} />
+              เริ่มคุยใหม่
+            </button>
+          </header>
+
+          <div className="assist-body">
+            {fresh ? (
+              <div className="assist-welcome">
+                <img className="qilin-welcome-anim" src="/assets/mascots/chat-qilin-navigation.webp" alt="น้องกิเลน" />
+                <h2>สวัสดีครับ น้องกิเลนเอง</h2>
+                <p className="muted">อยากไปไหน หรืออยากเช็กอะไรเกี่ยวกับทริป พิมพ์มาได้เลย หรือเลือกคำถามด้านล่าง</p>
+                <div className="can-inline">
+                  {CAN_DO.map((c) => (
+                    <span key={c.title}>
+                      <Icon name={c.icon} size={14} />
+                      {c.title}
+                    </span>
+                  ))}
+                </div>
+                <div className="idea-grid">
+                  {ideas.map((q) => (
+                    <button key={q.q} className="idea" onClick={() => send(q.q)} disabled={busy}>
+                      <span className="idea-icon">
+                        <Icon name={q.icon} size={18} />
+                      </span>
+                      <span>
+                        <b>{q.title}</b>
+                        <small>{q.q}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="assist-msgs">
+                <MessageList msgs={msgs} busy={busy} />
+              </div>
+            )}
           </div>
-        ))}
-        {busy && <p className="muted" style={{ margin: 0 }}>กำลังพิมพ์...</p>}
+
+          <footer className="assist-foot">
+            {!fresh && (
+              <div className="quick-chips">
+                {ideas.map((q) => (
+                  <button key={q.q} className="chip sm" onClick={() => send(q.q)} disabled={busy}>
+                    <Icon name={q.icon} size={13} />
+                    {q.q}
+                  </button>
+                ))}
+              </div>
+            )}
+            <Composer onSend={send} busy={busy} autoFocus onCancel={cancel} />
+            <p className="tiny muted" style={{ textAlign: "center" }}>
+              กด Enter เพื่อส่ง · Shift + Enter ขึ้นบรรทัดใหม่ · น้องกิเลนอาจตอบผิดได้ เรื่องฉุกเฉินให้โทร 1669 หรือ 1784
+            </p>
+          </footer>
+        </section>
+
+        <aside className="assist-side">
+          <section className="card">
+            <p className="sec-title">
+              <Icon name="route" size={15} /> ทริปถัดไป
+            </p>
+            {nextTrip ? (
+              <Link href={`/trips?id=${nextTrip.trip_id}`} className="side-trip">
+                <span className="row between nowrap">
+                  <span className="tiny muted">{tripNo}</span>
+                  {nextTrip.plan && <RiskChip level={nextTrip.plan.risk_level} />}
+                </span>
+                <b className="ellipsis">{nextTrip.title}</b>
+                <span className="tiny muted">{thaiDateTime(nextTrip.departure_time)}</span>
+                {nextTrip.plan && <span className="small">{RECO[nextTrip.plan.recommendation].title}</span>}
+              </Link>
+            ) : (
+              <p className="small muted">ยังไม่มีทริป ลองพิมพ์ว่า &quot;ไปหัวหินวันเสาร์นี้ 9 โมง&quot; น้องกิเลนสร้างให้ได้เลย</p>
+            )}
+          </section>
+
+          <section className="card grow-card history-card">
+            <div className="row between nowrap" style={{ marginBottom: 10 }}>
+              <p className="sec-title" style={{ margin: 0 }}>
+                <Icon name="list" size={15} /> ประวัติแชท
+              </p>
+              <span className="tiny muted">{history.length} บทสนทนา</span>
+            </div>
+            {history.length === 0 && <p className="small muted">ยังไม่มีประวัติ คุยกับน้องกิเลนแล้วจะเก็บไว้ที่นี่ กด &quot;เริ่มคุยใหม่&quot; เรื่องเดิมก็ยังอยู่</p>}
+            <div className="history-list">
+              {history.map((c) => (
+                <div key={c.id} className={`history-item ${c.id === currentId ? "on" : ""}`}>
+                  <button className="history-open" onClick={() => open(c.id)} disabled={busy || c.id === currentId} title={c.title}>
+                    <b className="ellipsis">{c.title}</b>
+                    <small>
+                      {chatWhen(c.at)} · {c.msgs.filter((m) => m.role === "me").length} คำถาม
+                      {c.id === currentId ? " · กำลังคุย" : ""}
+                    </small>
+                  </button>
+                  <button
+                    className="history-del"
+                    onClick={() => confirm("ลบบทสนทนานี้ใช่ไหม") && remove(c.id)}
+                    disabled={busy}
+                    aria-label={`ลบบทสนทนา ${c.title}`}
+                    title="ลบ"
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="card side-sos">
+            <Icon name="phone" size={18} />
+            <span className="grow small">
+              เหตุฉุกเฉินจริง อย่ารอแชท
+              <br />
+              <b>โทร 1669 · 191 · 1784</b>
+            </span>
+            <Link href="/emergency" className="btn sm ghost">
+              ดูเบอร์ทั้งหมด
+            </Link>
+          </section>
+        </aside>
       </div>
-      <div className="row" style={{ marginBottom: 8 }}>
-        {SAMPLE_PROMPTS.map((p) => (
-          <button key={p} className="btn btn-outline" style={{ fontSize: 14 }} onClick={() => send(p)} disabled={busy}>
-            {p}
-          </button>
-        ))}
-      </div>
-      <div className="row">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter ตอนกำลังเลือกตัวอักษรไทยห้ามส่ง (README ข้อ 1) keyCode 229 คือ Enter ของ IME บางเบราว์เซอร์
-            if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-              e.preventDefault();
-              send(input);
-            }
-          }}
-          placeholder="พิมพ์ข้อความ เช่น เลื่อน Trip 01 ไปวันถัดไป"
-          style={{ flex: 1, width: "auto" }}
-        />
-        <button className="btn" onClick={() => send(input)} disabled={busy}>
-          ส่ง
-        </button>
-      </div>
-    </div>
+    </>
   );
 }
