@@ -19,6 +19,9 @@ def empty_cache(monkeypatch):
     monkeypatch.setenv("DEMO_MODE", "false")
     places._nearby_cache.clear()
     places._nearby_pending.clear()
+    monkeypatch.setattr("places._overpass_down_until", 0.0)
+    # ตัวสำรอง Photon ห้ามยิงเน็ตจริงในเทสต์ ค่าเริ่มต้นให้ล่มด้วย เทสต์ error เดิมจะได้ error ของ Overpass ตามเดิม
+    monkeypatch.setattr("places.httpx.get", lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("offline")))
 
 
 @pytest.fixture
@@ -48,7 +51,7 @@ def test_one_request_with_radius_timeout_and_user_agent(overpass):
     places.nearby(*CNX)
     assert len(sent) == 1
     query = sent[0]["data"]["data"]
-    assert "around:5000,18.79,98.98" in query
+    assert "[bbox:18.7450,98.9324,18.8350,99.0276]" in query  # กรอบ 5 กม. รอบ 18.79, 98.98
     assert "attraction|viewpoint|museum|zoo|theme_park" in query
     assert "monument|temple|ruins" in query
     # ตัวดาวน์โหลดรอ 30 วิ และบอก Overpass ให้ทำได้นานเท่ากัน ส่วนคำขอรอแค่ 8 วิ
@@ -159,3 +162,73 @@ def test_slow_overpass_keeps_downloading_and_next_call_hits_cache(overpass, monk
     time.sleep(0.5)  # เหมือนหน้าเว็บรอแล้วลองใหม่ ระหว่างนี้ดาวน์โหลดเบื้องหลังเสร็จ
     assert places.nearby(*CNX)[0]["name"] == "ประตูท่าแพ"
     assert len(sent) == 1
+
+
+# ---------- หมวดสถานที่ + รัศมี (แชทแนะนำที่เที่ยวตามแนว) ----------
+
+def test_kinds_and_radius_change_the_query_and_limit(overpass):
+    cafes = [node(f"คาเฟ่ {i}", 18.79 + i * 0.001, 98.98, amenity="cafe") for i in range(20)]
+    sent = overpass(cafes)
+    found = places.nearby(*CNX, radius_km=15, kinds=("cafe",))
+    query = sent[0]["data"]["data"]
+    assert "[bbox:18.6549," in query and '["amenity"="cafe"]' in query
+    assert "tourism" not in query
+    assert len(found) == 15 and found[0]["kind_th"] == "คาเฟ่"
+
+
+def test_way_uses_center_point(overpass):
+    mall = {"type": "way", "center": {"lat": 18.79, "lon": 98.99}, "tags": {"name": "เซ็นทรัล", "shop": "mall"}}
+    overpass([mall])
+    found = places.nearby(*CNX, radius_km=10, kinds=("mall",))
+    assert found == [{"name": "เซ็นทรัล", "detail": None, "lat": 18.79, "lng": 98.99, "kind_th": "ห้างสรรพสินค้า"}]
+
+
+def test_unknown_kind_or_radius_is_validation_error():
+    for kwargs in ({"kinds": ("casino",)}, {"radius_km": 50}):
+        with pytest.raises(ApiError) as e:
+            places.nearby(*CNX, **kwargs)
+        assert e.value.code == "VALIDATION_ERROR"
+
+
+def test_overpass_timeout_remark_is_not_cached_as_empty(monkeypatch):
+    class Res:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"elements": [], "remark": 'runtime error: Query timed out in "query" at line 1 after 40 seconds.'}
+    monkeypatch.setattr("places.httpx.post", lambda *a, **k: Res())
+    with pytest.raises(ApiError) as e:
+        places.fetch_nearby(*CNX)
+    assert e.value.code == "UPSTREAM_TIMEOUT"
+
+
+# ---------- Overpass ล่ม ใช้ Photon ค้นตามหมวดแทน ----------
+
+def photon_feature(name, value, lat=18.791, lng=98.981):
+    return {"geometry": {"coordinates": [lng, lat]},
+            "properties": {"name": name, "osm_value": value, "city": "เมืองเชียงใหม่", "state": "จังหวัดเชียงใหม่"}}
+
+
+def test_overpass_down_falls_back_to_photon_and_skips_overpass_for_a_while(overpass, monkeypatch):
+    sent = overpass(error=httpx.ConnectError("504"))
+    asked = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        asked.append(params["q"])
+        hits = {"coffee": [photon_feature("Ristr8to", "cafe")], "กาแฟ": [photon_feature("Ristr8to", "cafe"), photon_feature("กาแฟดอย", "cafe")]}
+        return httpx.Response(200, json={"features": hits.get(params["q"], [])}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("places.httpx.get", fake_get)
+    found = places.nearby(*CNX, radius_km=10, kinds=("cafe",))
+    assert [p["name"] for p in found] == ["Ristr8to", "กาแฟดอย"]  # ชื่อซ้ำจากหลายคำค้นเหลืออันเดียว
+    assert found[0]["kind_th"] == "คาเฟ่" and found[0]["detail"] == "เมืองเชียงใหม่, จังหวัดเชียงใหม่"
+    assert sorted(asked) == sorted(q for q, _ in places.PHOTON_KIND_QUERY["cafe"])
+    places._nearby_cache.clear()
+    places.nearby(*CNX, radius_km=10, kinds=("market",))
+    assert len(sent) == 1  # Overpass เพิ่งล่ม คำขอถัดไปไม่ยิงซ้ำ ไปใช้ Photon เลย
+
+
+def test_both_down_keeps_the_overpass_error(overpass):
+    overpass(error=httpx.ConnectError("504"))
+    with pytest.raises(ApiError) as e:
+        places.nearby(*CNX)
+    assert e.value.code == "UPSTREAM_ERROR"

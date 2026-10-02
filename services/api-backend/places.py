@@ -3,6 +3,7 @@
 DEMO_MODE=true อ่านคำตอบที่บันทึกไว้ใน fixtures/ ไม่เรียกเน็ตเลย (บันทึกด้วย record_fixtures.py)
 """
 import json
+import math
 import os
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -50,6 +51,10 @@ ABBREVIATIONS = {
     "ประจวบ": "ประจวบคีรีขันธ์",
     "สุพรรณ": "สุพรรณบุรี",
     "กาญ": "กาญจนบุรี",
+    "ชม": "เชียงใหม่",
+    "ชร": "เชียงราย",
+    # "เขาใหญ่" เฉยๆ Photon ให้เขาใหญ่ที่สังขละบุรี/หัวหินก่อน คนส่วนใหญ่หมายถึงอุทยาน
+    "เขาใหญ่": "อุทยานแห่งชาติเขาใหญ่",
 }
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
@@ -139,13 +144,22 @@ NEARBY_RADIUS_KM = 5
 NEARBY_LIMIT = 8
 NEARBY_CACHE_SECONDS = 24 * 60 * 60
 
-# node ที่มีชื่อ และเป็นที่เที่ยวตาม CONTRACT หัวข้อ 6
-OVERPASS_QUERY = (
-    "[out:json][timeout:{timeout}];("
-    'node(around:{radius},{lat},{lng})["name"]["tourism"~"^(attraction|viewpoint|museum|zoo|theme_park)$"];'
-    'node(around:{radius},{lat},{lng})["name"]["historic"~"^(monument|temple|ruins)$"];'
-    ");out body;"
-)
+NEARBY_MAX_RADIUS_KM = 20
+NEARBY_LIMIT_WIDE = 15  # ขอหมวดอื่นหรือรัศมีกว้าง (แชทแนะนำที่เที่ยวตามแนว)
+
+# หมวดสถานที่ที่ขอได้ ค่าเริ่มต้น attraction = ที่เที่ยวตาม CONTRACT หัวข้อ 6 (เหมือนเดิม)
+# nwr = node / way / relation (ห้าง ตลาด สวน มักวาดเป็นพื้นที่) ใช้ out center ได้จุดกลาง
+KIND_QUERY = {
+    "attraction": ['node{a}["name"]["tourism"~"^(attraction|viewpoint|museum|zoo|theme_park)$"]',
+                   'node{a}["name"]["historic"~"^(monument|temple|ruins)$"]'],
+    "cafe": ['node{a}["name"]["amenity"="cafe"]'],
+    "market": ['nwr{a}["name"]["amenity"="marketplace"]'],
+    "park": ['nwr{a}["name"]["leisure"="park"]'],
+    "mall": ['nwr{a}["name"]["shop"~"^(mall|department_store)$"]'],
+    "nightlife": ['node{a}["name"]["amenity"~"^(bar|pub|nightclub)$"]'],
+    "waterfall": ['nwr{a}["name"]["waterway"="waterfall"]', 'nwr{a}["name"]["natural"="waterfall"]'],
+}
+DEFAULT_KINDS = ("attraction",)
 
 KIND_TH = {
     "attraction": "สถานที่ท่องเที่ยว",
@@ -156,6 +170,15 @@ KIND_TH = {
     "monument": "อนุสาวรีย์",
     "temple": "วัด",
     "ruins": "โบราณสถาน",
+    "cafe": "คาเฟ่",
+    "marketplace": "ตลาด",
+    "park": "สวนสาธารณะ",
+    "mall": "ห้างสรรพสินค้า",
+    "department_store": "ห้างสรรพสินค้า",
+    "bar": "บาร์",
+    "pub": "ผับ",
+    "nightclub": "ผับ",
+    "waterfall": "น้ำตก",
 }
 
 _nearby_cache: dict[tuple[float, float], tuple[float, list[dict]]] = {}
@@ -177,21 +200,33 @@ def _addr_detail(tags: dict) -> Optional[str]:
 def _to_nearby(element: dict) -> Optional[dict]:
     tags = element.get("tags") or {}
     name = tags.get("name:th") or tags.get("name")
-    kind = next((KIND_TH[tags[k]] for k in ("tourism", "historic") if tags.get(k) in KIND_TH), None)
-    if not name or not kind or "lat" not in element:
+    kind = next((KIND_TH[tags[k]] for k in ("tourism", "historic", "amenity", "leisure", "shop", "waterway", "natural") if tags.get(k) in KIND_TH), None)
+    point = element if "lat" in element else element.get("center")  # way/relation ได้จุดกลางจาก out center
+    if not name or not kind or not point:
         return None
     # Overpass ใช้ชื่อ lon ของเราใช้ lng (CONTRACT หัวข้อ 4)
-    return {"name": name, "detail": _addr_detail(tags), "lat": element["lat"], "lng": element["lon"], "kind_th": kind}
+    return {"name": name, "detail": _addr_detail(tags), "lat": point["lat"], "lng": point["lon"], "kind_th": kind}
 
 
-def fetch_nearby(lat: float, lng: float, timeout: float = OVERPASS_DOWNLOAD_TIMEOUT) -> list[dict]:
-    """ยิง Overpass จริง คืนที่เที่ยวทุกตัวในรัศมี ยังไม่เรียงและไม่ตัดจำนวน"""
-    query = OVERPASS_QUERY.format(timeout=timeout, radius=NEARBY_RADIUS_KM * 1000, lat=lat, lng=lng)
+def fetch_nearby(lat: float, lng: float, timeout: float = OVERPASS_DOWNLOAD_TIMEOUT,
+                 radius_km: float = NEARBY_RADIUS_KM, kinds: tuple = DEFAULT_KINDS) -> list[dict]:
+    """ยิง Overpass จริง คืนสถานที่ทุกตัวในรัศมี ยังไม่เรียงและไม่ตัดจำนวน"""
+    # ใช้กรอบสี่เหลี่ยมแทนวงกลม (around) Overpass ตอบใน ~1 วิ ส่วน around ตอนเซิร์ฟเวอร์ยุ่งหมดเวลา 40 วิ
+    # ตัดตามรัศมีจริงทีหลังใน nearby()
+    d_lat = radius_km / 111
+    d_lng = radius_km / (111 * max(0.2, math.cos(math.radians(lat))))
+    area, head = "", f"[bbox:{lat - d_lat:.4f},{lng - d_lng:.4f},{lat + d_lat:.4f},{lng + d_lng:.4f}]"
+    parts = "".join(q.format(a=area) + ";" for k in kinds for q in KIND_QUERY[k])
+    query = f"[out:json][timeout:{timeout}]{head};({parts});out center 400;"
     try:
         res = httpx.post(OVERPASS_URL, data={"data": query},
                          headers={"User-Agent": USER_AGENT}, timeout=timeout)
         res.raise_for_status()
-        elements = res.json().get("elements", [])
+        body = res.json()
+        # Overpass หมดเวลาฝั่งเขายังตอบ 200 แต่ elements ว่าง + remark ห้ามเก็บลง cache ว่าไม่มีที่เที่ยว
+        if "error" in str(body.get("remark", "")).lower() or "timed out" in str(body.get("remark", "")):
+            raise httpx.ReadTimeout(body["remark"])
+        elements = body.get("elements", [])
     except httpx.TimeoutException:
         raise ApiError("UPSTREAM_TIMEOUT", "ดึงสถานที่เที่ยวใกล้ๆ ไม่ทันเวลา ลองใหม่อีกครั้ง")
     except (httpx.HTTPError, ValueError):
@@ -199,20 +234,88 @@ def fetch_nearby(lat: float, lng: float, timeout: float = OVERPASS_DOWNLOAD_TIME
     return [p for p in map(_to_nearby, elements) if p]
 
 
-def _download(cell: tuple[float, float]) -> list[dict]:
-    """รันเบื้องหลัง เก็บลง cache เฉพาะที่สำเร็จ แล้วเอาช่องออกจากรายการที่กำลังโหลด"""
+# Overpass สาธารณะล่มบ่อย (504) ใช้ Photon ค้นตามหมวดแทน ข้อมูล OSM ชุดเดียวกันแต่ได้น้อยกว่า
+# Photon ต้องมีคำค้น เลยค้นหลายคำต่อหมวด แล้วกรองด้วย osm_tag ให้ได้เฉพาะประเภทนั้น
+PHOTON_KIND_QUERY = {
+    "attraction": [("วัด", "amenity:place_of_worship"), ("wat", "amenity:place_of_worship"), ("museum", "tourism:museum"),
+                   ("พิพิธภัณฑ์", "tourism:museum"), ("viewpoint", "tourism:viewpoint"), ("จุดชมวิว", "tourism:viewpoint")],
+    "cafe": [("coffee", "amenity:cafe"), ("กาแฟ", "amenity:cafe"), ("cafe", "amenity:cafe")],
+    "market": [("ตลาด", "amenity:marketplace"), ("market", "amenity:marketplace")],
+    "park": [("สวน", "leisure:park"), ("park", "leisure:park")],
+    "mall": [("mall", "shop:mall"), ("plaza", "shop:mall"), ("central", "shop:mall")],
+    "nightlife": [("bar", "amenity:bar"), ("pub", "amenity:pub"), ("ผับ", "amenity:nightclub")],
+    "waterfall": [("น้ำตก", "waterway:waterfall"), ("waterfall", "waterway:waterfall"), ("น้ำตก", "natural:waterfall")],
+}
+PHOTON_KIND_TH = {**KIND_TH, "place_of_worship": "วัด"}
+PHOTON_NEARBY_TIMEOUT = 8
+OVERPASS_DOWN_SECONDS = 5 * 60  # Overpass พังแล้วข้ามไปใช้ Photon เลยช่วงนี้ ไม่ต้องรอ 504 ทุกคำขอ
+NEARBY_FALLBACK_CACHE_SECONDS = 60 * 60  # ผลจาก Photon เก็บสั้นกว่า Overpass กลับมาจะได้ข้อมูลเต็ม
+_overpass_down_until = 0.0
+
+
+def fetch_nearby_photon(lat: float, lng: float, radius_km: float = NEARBY_RADIUS_KM, kinds: tuple = DEFAULT_KINDS) -> list[dict]:
+    d_lat = radius_km / 111
+    d_lng = radius_km / (111 * max(0.2, math.cos(math.radians(lat))))
+    bbox = f"{lng - d_lng:.4f},{lat - d_lat:.4f},{lng + d_lng:.4f},{lat + d_lat:.4f}"
+
+    def one(q_tag):
+        q, tag = q_tag
+        res = httpx.get(PHOTON_URL, params={"q": q, "osm_tag": tag, "bbox": bbox, "limit": 15, "lat": lat, "lon": lng},
+                        headers={"User-Agent": USER_AGENT}, timeout=PHOTON_NEARBY_TIMEOUT)
+        res.raise_for_status()
+        return res.json().get("features", [])
+
+    jobs = [qt for k in kinds for qt in PHOTON_KIND_QUERY[k]]
+    found, seen, failed = [], set(), 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for job in [pool.submit(one, qt) for qt in jobs]:
+            try:
+                features = job.result()
+            except (httpx.HTTPError, ValueError):
+                failed += 1
+                continue
+            for f in features:
+                prop = f.get("properties") or {}
+                name, kind = prop.get("name"), PHOTON_KIND_TH.get(prop.get("osm_value"))
+                if not name or not kind or name in seen:
+                    continue
+                seen.add(name)
+                lng_, lat_ = f["geometry"]["coordinates"]
+                detail = ", ".join(v for v in (prop.get("district") or prop.get("city"), prop.get("state")) if v) or None
+                found.append({"name": name, "detail": detail, "lat": lat_, "lng": lng_, "kind_th": kind})
+    if failed == len(jobs):
+        raise ApiError("UPSTREAM_ERROR", "ดึงสถานที่เที่ยวใกล้ๆ ไม่ได้ตอนนี้ ลองใหม่อีกครั้ง")
+    return found
+
+
+def _download(cell: tuple) -> list[dict]:
+    """รันเบื้องหลัง เก็บลง cache เฉพาะที่สำเร็จ แล้วเอาช่องออกจากรายการที่กำลังโหลด
+    cell = (lat, lng) แบบเดิม หรือ (lat, lng, radius_km, kinds) ตอนขอหมวดอื่น"""
+    global _overpass_down_until
+    radius, kinds = (NEARBY_RADIUS_KM, DEFAULT_KINDS) if len(cell) == 2 else cell[2:]
     try:
-        candidates = fetch_nearby(*cell)
+        ttl = NEARBY_CACHE_SECONDS
+        try:
+            if monotonic() < _overpass_down_until:
+                raise ApiError("UPSTREAM_ERROR", "Overpass ล่มเมื่อสักครู่ ใช้ Photon ไปก่อน")
+            candidates = fetch_nearby(*cell[:2]) if len(cell) == 2 else fetch_nearby(cell[0], cell[1], radius_km=radius, kinds=kinds)
+        except ApiError as overpass_error:
+            if overpass_error.code == "UPSTREAM_ERROR":  # ตอบ error จริง (504/429) ถ้าแค่ช้าคราวหน้ายังลอง Overpass
+                _overpass_down_until = max(_overpass_down_until, monotonic() + OVERPASS_DOWN_SECONDS)
+            try:
+                candidates, ttl = fetch_nearby_photon(cell[0], cell[1], radius, kinds), NEARBY_FALLBACK_CACHE_SECONDS
+            except ApiError:
+                raise overpass_error
         if len(_nearby_cache) > 1000:
             _nearby_cache.clear()
-        _nearby_cache[cell] = (monotonic() + NEARBY_CACHE_SECONDS, candidates)
+        _nearby_cache[cell] = (monotonic() + ttl, candidates)
         return candidates
     finally:
         with _pending_lock:
             _nearby_pending.pop(cell, None)
 
 
-def _cached_candidates(cell: tuple[float, float]) -> list[dict]:
+def _cached_candidates(cell: tuple) -> list[dict]:
     """รอไม่เกิน OVERPASS_TIMEOUT ไม่ทันตอบ UPSTREAM_TIMEOUT แต่ให้โหลดต่อ คำขอถัดไปจะได้จาก cache"""
     with _pending_lock:
         hit = _nearby_cache.get(cell)
@@ -240,25 +343,32 @@ def _demo_cell(lat: float, lng: float) -> tuple[dict, list[dict]]:
     return best_center, best_places
 
 
-def nearby(lat: float, lng: float) -> list[dict]:
+def nearby(lat: float, lng: float, radius_km: float = NEARBY_RADIUS_KM, kinds: tuple = DEFAULT_KINDS) -> list[dict]:
     if not in_thailand(lat, lng):
         raise ApiError("OUT_OF_THAILAND", "ตอนนี้รองรับเฉพาะสถานที่ในประเทศไทย")
+    unknown = [k for k in kinds if k not in KIND_QUERY]
+    if unknown or not kinds or not 1 <= radius_km <= NEARBY_MAX_RADIUS_KM:
+        raise ApiError("VALIDATION_ERROR", f"หมวดใช้ได้ {', '.join(KIND_QUERY)} รัศมี 1-{NEARBY_MAX_RADIUS_KM} กม.")
+    kinds = tuple(sorted(kinds))
+    default = radius_km == NEARBY_RADIUS_KM and kinds == DEFAULT_KINDS
+    limit = NEARBY_LIMIT if default else NEARBY_LIMIT_WIDE
     here = {"lat": lat, "lng": lng}
     if demo_mode():
         # บนเวทีอยู่คนละที่กับตอนบันทึก ใช้จุดกลางช่องที่บันทึกไว้ ไม่งั้นรัศมี 5 กม. ตัดทิ้งหมด
         here, candidates = _demo_cell(lat, lng)
     else:
         # ปัดทศนิยม 2 ตำแหน่ง (~1 กม.) คนที่อยู่ช่องเดียวกันใช้ข้อมูลชุดเดียว ประหยัดโควตา Overpass
-        candidates = _cached_candidates((round(lat, 2), round(lng, 2)))
+        cell = (round(lat, 2), round(lng, 2))
+        candidates = _cached_candidates(cell if default else (*cell, radius_km, kinds))
 
     found, seen = [], set()
     for place in sorted(candidates, key=lambda p: haversine_km(here, p)):
-        if haversine_km(here, place) > NEARBY_RADIUS_KM:
+        if haversine_km(here, place) > radius_km:
             break
         # OpenStreetMap มักมีที่เดียวกันหลายจุด เก็บจุดที่ใกล้สุด
         if place["name"] not in seen:
             seen.add(place["name"])
             found.append(place)
-        if len(found) == NEARBY_LIMIT:
+        if len(found) == limit:
             break
     return found
