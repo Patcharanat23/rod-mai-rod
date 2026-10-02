@@ -1,0 +1,272 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import Icon from "./Icon";
+import ChatDrawer from "./ChatDrawer";
+import ChatFab from "./ChatFab";
+import { getToken, setToken } from "@/lib/api";
+import { useApp } from "@/lib/store";
+import { applyMapStyle } from "@/lib/mapStyle";
+import { THEMES, applyTheme, getTheme, type Theme } from "@/lib/theme";
+import { TEXT_SIZES, applyTextScale, getTextScale, resetSplits } from "@/lib/layout";
+import { useChat } from "@/lib/chat";
+
+const NAV = [
+  { href: "/", label: "หน้าหลัก", icon: "home" },
+  { href: "/trips", label: "ทริปของฉัน", short: "ทริป", icon: "route" },
+  { href: "/map", label: "แผนที่ความเสี่ยง", short: "แผนที่", icon: "map" },
+  { href: "/emergency", label: "ฉุกเฉิน", icon: "sos" },
+  { href: "/assistant", label: "คุยกับน้องกิเลน", short: "น้องกิเลน", icon: "chat" },
+];
+
+// เปิดแชทน้องกิเลนจากที่ไหนก็ได้ openChat("ข้อความ") จะส่งข้อความนั้นให้ทันที
+// อยู่หน้า /assistant แล้ว = ส่งในหน้านั้นเลย ไม่เปิดแชทลอยซ้อน
+export function openChat(text?: string) {
+  window.dispatchEvent(new CustomEvent("open-chat", { detail: text }));
+}
+
+const SIDEBAR_KEY = "rmr_redesign_sidebar";
+
+export default function Shell({ children }: { children: React.ReactNode }) {
+  const path = usePathname();
+  // พื้นหลังแยกตามหน้า: CSS เลือกรูปจาก html[data-page] (globals.css)
+  useEffect(() => {
+    document.documentElement.dataset.page = path.split("/")[1] || "home";
+  }, [path]);
+  const router = useRouter();
+  const { ready, trips } = useApp();
+  const [chatOpen, setChatOpen] = useState(false);
+  // พับแถบเมนูซ้ายเหลือแต่ไอคอน จำไว้ในเครื่อง (CSS อ่านจาก html[data-sidebar])
+  const [mini, setMini] = useState(false);
+  useEffect(() => {
+    try {
+      setMini(localStorage.getItem(SIDEBAR_KEY) === "mini");
+    } catch {}
+  }, []);
+  useEffect(() => {
+    document.documentElement.dataset.sidebar = mini ? "mini" : "full";
+  }, [mini]);
+  function toggleSidebar() {
+    setMini(!mini);
+    try {
+      localStorage.setItem(SIDEBAR_KEY, mini ? "full" : "mini");
+    } catch {}
+  }
+  const { send } = useChat();
+  const onAssistant = path.startsWith("/assistant");
+
+  useEffect(() => {
+    applyMapStyle();
+    applyTheme();
+    applyTextScale();
+  }, []);
+  useEffect(() => {
+    const on = (e: Event) => {
+      const seed = (e as CustomEvent<string | undefined>).detail;
+      if (!location.pathname.startsWith("/assistant")) setChatOpen(true);
+      if (seed) send(seed);
+    };
+    window.addEventListener("open-chat", on);
+    return () => window.removeEventListener("open-chat", on);
+  }, [send]);
+  // ไปหน้าเต็มแล้ว ปิดแชทลอย
+  useEffect(() => {
+    if (onAssistant) setChatOpen(false);
+  }, [onAssistant]);
+
+  // ยังไม่ login พาไปหน้า login
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    setAuthed(!!getToken());
+    if (!path.startsWith("/login") && !getToken()) router.replace("/login");
+  }, [path, router]);
+
+  if (path.startsWith("/login")) return <>{children}</>;
+  if (!authed || !ready)
+    return (
+      <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
+        <div className="stack" style={{ justifyItems: "center" }}>
+          <img className="qilin-welcome-anim" src="/assets/shared/qilin-avatar.webp" alt="" style={{ width: 88, borderRadius: 24, boxShadow: "var(--shadow-lg)" }} />
+          <p className="muted" style={{ fontWeight: 600 }}>น้องกิเลนกำลังโหลดข้อมูล...</p>
+        </div>
+      </div>
+    );
+  const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <Link href="/" className="logo">
+          <img src="/assets/shared/qilin-avatar.webp" alt="รอดไม่รอด" />
+          <span className="nav-text">
+            <b>รอดไม่รอด</b>
+            <small>วางแผนเดินทางปลอดภัย</small>
+          </span>
+        </Link>
+        <button
+          className="sidebar-toggle"
+          onClick={toggleSidebar}
+          aria-label={mini ? "ขยายเมนู" : "พับเมนู"}
+          aria-expanded={!mini}
+          title={mini ? "ขยายเมนู" : "พับเมนู"}
+        >
+          <Icon name={mini ? "chevron" : "back"} size={16} />
+        </button>
+        {NAV.map((n) => (
+          <Link key={n.href} href={n.href} className={`nav-link ${active(n.href) ? "active" : ""}`} title={mini ? n.label : undefined}>
+            <Icon name={n.icon} />
+            <span className="nav-text">{n.label}</span>
+            {n.href === "/trips" && trips.length > 0 && <span className="badge" style={{ background: "var(--violet)" }}>{trips.length}</span>}
+          </Link>
+        ))}
+        <div className="sidebar-mascot">
+          <p>ออกเดินทางเมื่อไหร่ ให้น้องกิเลนช่วยเช็กก่อนนะ</p>
+          <img className="qilin-mascot-anim" src="/assets/mascots/risk-qilin-navigation.webp" alt="น้องกิเลน" />
+        </div>
+        <button
+          className="nav-link"
+          title={mini ? "ออกจากระบบ" : undefined}
+          style={{ marginTop: 6, border: 0, background: "none", textAlign: "left" }}
+          onClick={() => {
+            setToken(null);
+            location.href = "/login";
+          }}
+        >
+          <Icon name="logout" />
+          <span className="nav-text">ออกจากระบบ</span>
+        </button>
+      </aside>
+
+      <main className="main">{children}</main>
+
+      <nav className="bottom-nav" aria-label="เมนูหลัก">
+        {NAV.map((n) => (
+          <Link key={n.href} href={n.href} className={active(n.href) ? "active" : ""}>
+            <Icon name={n.icon} size={22} />
+            {"short" in n ? n.short : n.label}
+          </Link>
+        ))}
+      </nav>
+
+      {/* ปุ่มวงกลมน้องกิเลน ลอยทุกหน้า (ยกเว้นหน้าคุยเต็มหน้า) */}
+      {!chatOpen && !onAssistant && (
+        <ChatFab onOpen={() => setChatOpen(true)} />
+      )}
+      {chatOpen && <ChatDrawer onClose={() => setChatOpen(false)} />}
+    </div>
+  );
+}
+
+// ปุ่มเลือกธีม อยู่แถบบนทุกหน้า ใช้ได้ทั้งคอมและมือถือ
+function ThemePicker() {
+  const [open, setOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>("dark");
+  const [scale, setScale] = useState(1);
+  const [resetDone, setResetDone] = useState(false);
+  useEffect(() => {
+    setTheme(getTheme());
+    setScale(getTextScale());
+  }, []);
+  const current = THEMES.find((t) => t.id === theme)!;
+  return (
+    <div style={{ position: "relative" }}>
+      <button className="icon-btn" onClick={() => setOpen(!open)} aria-label="ธีมและขนาดตัวอักษร" aria-expanded={open} title="ธีม ขนาดตัวอักษร และขนาดการ์ด">
+        <span className="theme-dot" style={{ background: current.swatch }} />
+      </button>
+      {open && (
+        <div className="theme-menu card" role="menu">
+          {THEMES.map((t) => (
+            <button
+              key={t.id}
+              role="menuitemradio"
+              aria-checked={t.id === theme}
+              className={`theme-opt ${t.id === theme ? "on" : ""}`}
+              onClick={() => {
+                applyTheme(t.id);
+                setTheme(t.id);
+                setOpen(false);
+              }}
+            >
+              <span className="theme-dot" style={{ background: t.swatch }} />
+              {t.label}
+              {t.id === theme && <Icon name="check" size={15} />}
+            </button>
+          ))}
+          <p className="tiny muted theme-sec">ขนาดตัวอักษร</p>
+          <div className="text-sizes" role="radiogroup" aria-label="ขนาดตัวอักษร">
+            {TEXT_SIZES.map((t) => (
+              <button
+                key={t.scale}
+                role="radio"
+                aria-checked={t.scale === scale}
+                className={`text-size ${t.scale === scale ? "on" : ""}`}
+                title={t.label}
+                style={{ fontSize: 13 * t.scale }}
+                onClick={() => {
+                  applyTextScale(t.scale);
+                  setScale(t.scale);
+                }}
+              >
+                ก
+              </button>
+            ))}
+          </div>
+          <button
+            className="theme-opt reset"
+            title="การ์ดที่ลากขยายหรือย่อไว้ในทุกหน้าจะกลับเป็นขนาดเดิม"
+            onClick={() => {
+              resetSplits();
+              setResetDone(true);
+              setTimeout(() => setResetDone(false), 1500);
+            }}
+          >
+            <Icon name={resetDone ? "check" : "layers"} size={15} />
+            {resetDone ? "คืนขนาดแล้ว" : "คืนขนาดการ์ดเดิม"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Topbar({ title, sub, right }: { title: string; sub?: string; right?: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const { alerts, email } = useApp();
+  return (
+    <header className="topbar">
+      <div className="title">
+        <h1>{title}</h1>
+        {sub && <p>{sub}</p>}
+      </div>
+      {right}
+      <ThemePicker />
+      <div style={{ position: "relative" }}>
+        <button className="icon-btn" onClick={() => setOpen(!open)} aria-label="การแจ้งเตือน">
+          <Icon name="bell" />
+          {alerts.length > 0 && <span className="dot" />}
+        </button>
+        {open && (
+          <div className="card" style={{ position: "absolute", right: 0, top: 50, width: 340, zIndex: 1300, padding: 12, boxShadow: "var(--shadow-lg)" }}>
+            <p className="bold" style={{ padding: "4px 6px 10px" }}>การแจ้งเตือน</p>
+            <div className="stack" style={{ gap: 4 }}>
+              {alerts.length === 0 && <p className="small muted" style={{ padding: "0 6px 6px" }}>ยังไม่มีเรื่องที่ต้องระวัง</p>}
+              {alerts.map((a) => (
+                <Link key={a.text} href={a.href} onClick={() => setOpen(false)} className="row nowrap" style={{ alignItems: "flex-start", padding: 8, borderRadius: 12 }}>
+                  <span className={`card-icon ${a.tone}`} style={{ width: 34, height: 34 }}>
+                    <Icon name={a.icon} size={17} />
+                  </span>
+                  <div className="grow">
+                    <p className="small">{a.text}</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <img className="avatar" src="/assets/shared/qilin-avatar.webp" alt="บัญชีของฉัน" title={email ?? ""} />
+    </header>
+  );
+}
