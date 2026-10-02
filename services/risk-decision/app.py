@@ -13,6 +13,7 @@ WEATHER_UNAVAILABLE) และ summary_th ไม่บอกว่า "ตลอ
 หมุดฝน/ลม ณ ชั่วโมงนี้ (source: OPEN_METEO จาก weather-disaster งาน 6.7) ไม่ถูกนับ กันนับซ้ำกับ
 พยากรณ์ ณ เวลาไปถึงที่ใช้อยู่แล้ว
 """
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -53,6 +54,44 @@ class Route(BaseModel):
     route_id: str
     duration_min: float
     points: list[Point]
+    geometry: Optional[list[dict]] = None  # เส้นทางทั้งเส้น [{lat, lng}] ใช้เช็คถนนน้ำท่วม
+
+
+# หมุดน้ำท่วม GISTDA มี road_cells = ช่องที่ถนนท่วมจริง
+# เส้นทางผ่านห่างช่องเหล่านี้ไม่เกิน FLOOD_ROAD_HIT_KM ถึงนับว่าเจอน้ำท่วม (แทนรัศมีรอบกลางตำบล)
+FLOOD_ROAD_HIT_KM = 0.5
+_HIT_PAD_DEG = 0.01  # ~1 กม. กรองช่วงถนนที่อยู่ใกล้ช่องก่อนคิดระยะจริง
+
+
+def _segment_km(p: dict, a: dict, b: dict) -> float:
+    """ระยะจากจุด p ถึงช่วงถนน a-b (ฉายแบนรอบ p พอสำหรับระยะไม่กี่กิโล)"""
+    kx = 111.32 * math.cos(math.radians(p["lat"]))
+    ax, ay = (a["lng"] - p["lng"]) * kx, (a["lat"] - p["lat"]) * 110.57
+    bx, by = (b["lng"] - p["lng"]) * kx, (b["lat"] - p["lat"]) * 110.57
+    dx, dy = bx - ax, by - ay
+    t = max(0.0, min(1.0, -(ax * dx + ay * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
+    return math.hypot(ax + t * dx, ay + t * dy)
+
+
+def road_flood_hits(geometry: list[dict], floods: list[dict]) -> list[tuple[dict, dict]]:
+    """หมุดน้ำท่วมที่เส้นทางวิ่งผ่านถนนที่ท่วมจริง คืน [(หมุด, จุดที่เจอ)]"""
+    segs = list(zip(geometry, geometry[1:]))
+    hits = []
+    for h in floods:
+        cells = [{"lat": c[0], "lng": c[1]} for c in h.get("road_cells") or []]
+        if not cells:
+            continue  # ท่วมแต่ไม่มีถนนท่วม (นา ทุ่ง) ไม่นับว่าเส้นทางเจอ
+        lo_lat = min(c["lat"] for c in cells) - _HIT_PAD_DEG
+        hi_lat = max(c["lat"] for c in cells) + _HIT_PAD_DEG
+        lo_lng = min(c["lng"] for c in cells) - _HIT_PAD_DEG
+        hi_lng = max(c["lng"] for c in cells) + _HIT_PAD_DEG
+        near = [(a, b) for a, b in segs
+                if min(a["lat"], b["lat"]) <= hi_lat and max(a["lat"], b["lat"]) >= lo_lat
+                and min(a["lng"], b["lng"]) <= hi_lng and max(a["lng"], b["lng"]) >= lo_lng]
+        hit = next((c for c in cells for a, b in near if _segment_km(c, a, b) <= FLOOD_ROAD_HIT_KM), None)
+        if hit:
+            hits.append((h, hit))
+    return hits
 
 
 class EvaluateIn(BaseModel):
@@ -83,9 +122,14 @@ def score_in_band(level: str, severity: float) -> int:
     return round(low + (high - low) * max(0.0, min(1.0, severity)))
 
 
+# ทดลอง GISTDA: น้ำท่วมเป็นเรื่องเฉพาะพื้นที่ นับแคบกว่าภัยอื่น
+# 10 กม. = ครึ่งหนึ่งของระยะห่างจุดตรวจ 20 กม. น้ำท่วมบนถนนระหว่างจุดยังไม่หลุด
+RADIUS_BY_TYPE_KM = {"FLOOD": 10.0}
+
+
 def nearby_hazards(point: dict, hazards: list[dict], radius_km: float = HAZARD_RADIUS_KM) -> list[dict]:
-    """หมุดภัยที่อยู่ในรัศมี radius_km จากจุดนี้ (README ข้อ 8)"""
-    return [h for h in hazards if haversine_km(point, h) <= radius_km]
+    """หมุดภัยที่อยู่ในรัศมีของชนิดภัยนั้นจากจุดนี้ (README ข้อ 8)"""
+    return [h for h in hazards if haversine_km(point, h) <= min(radius_km, RADIUS_BY_TYPE_KM.get(h.get("hazard_type"), radius_km))]
 
 
 def point_level(forecast: Optional[dict], hazards: list[dict]) -> Optional[str]:
@@ -218,7 +262,12 @@ def _risk_cause_th(point: dict) -> str:
     if forecast and wind_level(forecast["wind_kmh"]) == level:
         causes.append("ลมแรงจัด" if heavy else "ลมแรง")
     if worst([h["severity"] for h in hazards]) == level:
-        causes.append("มีหมุดภัยรุนแรง" if heavy else "มีหมุดภัยเฝ้าระวัง")
+        # บอกชื่อภัยที่เจอจริง เช่น "น้ำท่วม ต.นาหนัง อ.โพนพิสัย" แทนคำกลางๆ
+        named = [h for h in hazards if h["severity"] == level and h.get("title_th")]
+        if named:
+            causes.append(named[0]["title_th"].split(" (")[0])
+        else:
+            causes.append("มีหมุดภัยรุนแรง" if heavy else "มีหมุดภัยเฝ้าระวัง")
     return "และ".join(causes) if causes else "สภาพอากาศแปรปรวน"
 
 
@@ -328,8 +377,17 @@ def evaluate(body: EvaluateIn):
     results, i, main_point_hazards = [], 0, []
     for route_idx, route in enumerate(body.routes):
         points = []
-        for _ in route.points:
-            point_hazards = nearby_hazards(flat[i], hazards)
+        # มีเส้นทางทั้งเส้น: น้ำท่วมที่มี road_cells นับเฉพาะถนนที่ท่วมจริงบนเส้นทาง ผูกกับจุดตรวจที่ใกล้จุดเจอที่สุด
+        # (ย้ายหมุดมาไว้ที่จุดตรวจ = อยู่บนเส้นทาง) ไม่มีเส้นทาง: ใช้รัศมีแบบเดิม
+        road_hazards: dict[int, list[dict]] = {}
+        radius_hazards = hazards
+        if route.geometry:
+            radius_hazards = [h for h in hazards if "road_cells" not in h]
+            for h, at in road_flood_hits(route.geometry, [h for h in hazards if "road_cells" in h]):
+                j = min(range(len(route.points)), key=lambda k: haversine_km(flat[i + k], at))
+                road_hazards.setdefault(j, []).append({**h, "lat": flat[i + j]["lat"], "lng": flat[i + j]["lng"]})
+        for k in range(len(route.points)):
+            point_hazards = nearby_hazards(flat[i], radius_hazards) + road_hazards.get(k, [])
             level = point_level(forecasts[i], point_hazards)
             severity = point_severity(forecasts[i], point_hazards, flat[i], level) if level else None
             points.append({**flat[i], "forecast": forecasts[i], "hazards": point_hazards, "risk_level": level,
