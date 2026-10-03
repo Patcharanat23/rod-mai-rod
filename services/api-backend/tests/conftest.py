@@ -32,3 +32,10 @@ def client():
 def auth_header(client):
     res = client.post("/api/v1/auth/login", json={"email": "demo@example.com", "password": "demo1234"})
     return {"Authorization": f"Bearer {res.json()['data']['token']}"}
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """เทสต์ล็อกอินบ่อยจาก IP เดียว ล้างตัวนับทุกเทสต์ ไม่งั้นโดน 429 เอง"""
+    import app as appmod
+    appmod._hits.clear()
