@@ -205,7 +205,8 @@ function RiskMap() {
             zoom={6}
             center={{ lat: 13.2, lng: 101 }}
             flyTo={fly}
-            flood={showFlood && (floodWindow ?? true)}
+            // เปิดชั้นภาพเมื่อรู้ชุดข้อมูลแล้วเท่านั้น (ระบบเพิ่งเปิด GISTDA ยังโหลดไม่เสร็จ หรือไม่มี key = null)
+            flood={showFlood && floodWindow ? floodWindow : false}
             pins={[
               ...(found ? [{ id: "found", lat: found.lat, lng: found.lng, color: "#38bdf8", icon: "pin", label: found.name, tip: found.name, selected: true }] : []),
               ...shown.map((h) => ({
@@ -267,7 +268,7 @@ function RiskMap() {
             <span className="grow small">
               พื้นที่น้ำท่วมจากดาวเทียม
               <br />
-              <span className="tiny muted">GISTDA {floodWindow === "7days" ? "7" : "3"} วันล่าสุด</span>
+              <span className="tiny muted">{floodWindow ? `GISTDA ${floodWindow === "7days" ? "7" : "3"} วันล่าสุด` : "GISTDA ยังไม่มีข้อมูล"}</span>
             </span>
             <button className={`switch ${showFlood ? "on" : ""}`} aria-pressed={showFlood} aria-label="แสดงพื้นที่น้ำท่วมจากดาวเทียม" onClick={() => setShowFlood(!showFlood)} />
           </div>
