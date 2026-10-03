@@ -173,3 +173,38 @@ def test_tool_call_keeps_gemini_thought_signature():
 def test_bot_knows_its_name_every_message():
     msgs = llm.build_messages("คุณชื่ออะไร", [{"role": "user", "content": "สวัสดี"}], [])
     assert msgs[0]["role"] == "system" and llm.BOT_NAME in msgs[0]["content"]
+
+
+def test_english_question_answered_in_thai_is_sent_back(monkeypatch):
+    monkeypatch.setenv("LLM_PRIMARY", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    monkeypatch.setenv("GROQ_MODEL", "groq-model")
+    replies = [
+        {"content": "ตอนนี้เชียงใหม่ท้องฟ้าแจ่มใส ไม่มีฝน"},  # ตอบไทยตามข้อมูลจาก tool
+        {"content": "Chiang Mai is clear right now, no rain."},
+    ]
+    seen = []
+
+    class FakeClient:
+        def __init__(self, **kw):
+            self.chat = self
+            self.completions = self
+
+        def create(self, model, messages, **kw):
+            seen.append(list(messages))
+            msg = type("M", (), {"tool_calls": None, **replies.pop(0)})
+            return type("R", (), {"choices": [type("C", (), {"message": msg})]})
+
+    monkeypatch.setattr(llm, "OpenAI", FakeClient)
+    out = llm.answer("Is it raining in Chiang Mai now?", [], [], run_tool=lambda name, args: ({}, []))
+    assert out["reply"] == "Chiang Mai is clear right now, no rain."
+    assert seen[1][-1] == {"role": "user", "content": llm.ENGLISH_NUDGE}
+    assert seen[1][-2]["role"] == "assistant"
+
+
+def test_language_check_only_for_english_questions():
+    assert llm.wrong_language("ไม่มีฝนครับ", "Is it raining?")
+    assert not llm.wrong_language("No rain. Try ข้าวซอย at Khao Soi Khun Yai", "Is it raining?")  # ชื่อไทยปนได้
+    assert not llm.wrong_language("ไม่มีฝนครับ", "ฝนตกไหม")
+    assert not llm.wrong_language("โทร 1669", "1669?")
+

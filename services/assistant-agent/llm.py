@@ -183,6 +183,22 @@ def unsourced_places(text: str, question: str) -> bool:
     return bool(PLACE_ASK.search(question)) and sum(bool(re.match(r"\s*([-*•]|\d+[.)])\s", l)) for l in text.split("\n")) >= 2
 
 
+# ถามภาษาอังกฤษ แต่ Qwen มักตอบไทยตามข้อมูลจาก tool ที่เป็นภาษาไทย แม้ system สั่งแล้ว
+ENGLISH_NUDGE = ("The user wrote in English. Rewrite your previous answer entirely in English. "
+                 "Keep the same facts and numbers, and write Thai place names in English letters.")
+
+
+def _thai(text: str) -> int:
+    return sum("฀" <= c <= "๿" for c in text)
+
+
+def wrong_language(text: str, question: str) -> bool:
+    """ถามเป็นภาษาอังกฤษล้วน แต่คำตอบเป็นภาษาไทยเกิน 30% ของตัวอักษร"""
+    if _thai(question) or not re.search(r"[A-Za-z]{2}", question):
+        return False
+    return _thai(text) > 0.3 * max(1, sum(c.isalpha() for c in text))
+
+
 def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[Optional[str], list, list]:
     """ลองตัวหลักก่อน ล่ม / 429 / โมเดลถูกถอด ค่อยลองตัวสำรอง
     คืน (ข้อความ หรือ None ถ้าล่มหมด, actions, ผลของ tools ที่แก้ข้อมูลสำเร็จ)"""
@@ -191,7 +207,7 @@ def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[
     changed: list[dict] = []
     for p in providers():
         convo = list(messages)
-        used_tool = nudged = False
+        used_tool = nudged = relang = False
         try:
             client = OpenAI(api_key=p["api_key"], base_url=p["base_url"], timeout=LLM_TIMEOUT, max_retries=0)
             extra = {"tools": tools.SCHEMAS} if run_tool else {}
@@ -207,6 +223,10 @@ def complete(messages: list[dict], run_tool: Optional[RunTool] = None) -> tuple[
                     if text and run_tool and not used_tool and not nudged and unsourced_places(msg.content or "", messages[-1]["content"]):
                         nudged = True
                         convo.append({"role": "user", "content": LOOKUP_NUDGE})  # Qwen ไม่ค่อยฟัง system กลางบทสนทนา
+                        continue
+                    if text and not relang and wrong_language(text, messages[-1]["content"]):
+                        relang = True
+                        convo += [{"role": "assistant", "content": msg.content or ""}, {"role": "user", "content": ENGLISH_NUDGE}]
                         continue
                     if text:
                         return text, unique(actions), changed
