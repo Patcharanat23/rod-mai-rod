@@ -1,2 +1,2 @@
-# ทุก PR ต้องได้ approve จากเจ้าของโปรเจกต์ (เปิด "Require review from Code Owners" ใน branch protection)
-*    @Patcharanat23
+# ทุก PR ต้องได้ approve จาก code owner คนใดคนหนึ่ง (Patcharanat หรือ Pitchakorn ซึ่งดูแลโปรเจกต์ต่อ)
+*    @Patcharanat23 @pitchakorn-pkt
