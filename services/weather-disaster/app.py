@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+import gistda
 import hazard_feeds
 import weather
 from envelope import ApiError, ok, setup
@@ -28,6 +29,8 @@ def warm_hazards():
     # HAZARD_WARMUP=false turns it off; tests do, so no thread touches the network
     if os.getenv("HAZARD_WARMUP", "true").lower() == "true":
         threading.Thread(target=hazard_feeds.keep_warm, daemon=True).start()
+    if not DEMO_MODE and gistda.enabled():
+        threading.Thread(target=gistda.keep_fresh, daemon=True).start()
 
 
 class TimedPoint(BaseModel):
@@ -68,4 +71,8 @@ def hazards(min_lat: float, min_lng: float, max_lat: float, max_lng: float):
     if min_lat > max_lat or min_lng > max_lng:
         raise ApiError("VALIDATION_ERROR", "กรอบพิกัดไม่ถูกต้อง ค่า min ต้องไม่มากกว่า max")
     found, warnings = hazard_feeds.get_hazards((min_lat, min_lng, max_lat, max_lng))
-    return ok({"hazards": found, "warnings": warnings})
+    data = {"hazards": found, "warnings": warnings}
+    if gistda.enabled():
+        # ชุดน้ำท่วม GISTDA ที่ใช้อยู่ หน้าเว็บใช้ชั้นภาพชุดเดียวกัน
+        data["flood_window"] = gistda.window()
+    return ok(data)
