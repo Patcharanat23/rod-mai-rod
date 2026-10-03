@@ -116,11 +116,17 @@ function PlaceInput({ label, value, onPick, onClear, active, onFocus }: { label:
   );
 }
 
-// ISO (UTC) -> ค่าของช่อง datetime-local ตามเวลาในเครื่อง
-function toLocalInput(iso: string) {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// ช่องเวลาเป็นเวลาไทยเสมอ ไม่ใช้ timezone ของเครื่อง (CONTRACT หัวข้อ 7) ไทยเป็น UTC+7 ไม่มีเวลาออมแสง
+const TH_OFFSET_MS = 7 * 3600_000;
+
+// ISO (UTC) -> ค่าของช่อง datetime-local เป็นเวลาไทย
+function toThaiInput(iso: string) {
+  return new Date(new Date(iso).getTime() + TH_OFFSET_MS).toISOString().slice(0, 16);
+}
+
+// ค่าของช่อง datetime-local (เวลาไทย) -> ISO (UTC)
+function thaiInputToUtc(value: string) {
+  return new Date(`${value}:00+07:00`).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 // ใช้ทั้งสร้างทริปใหม่ และแก้ทริปเดิม (ส่ง initial มา)
@@ -144,7 +150,7 @@ export default function PlanTrip({
   const [stops, setStops] = useState<Place[]>(initial?.stops ?? []);
   const [focus, setFocus] = useState<"origin" | "dest" | "stop">(initial || presetDestination ? "stop" : "origin");
   const [title, setTitle] = useState(initial?.title ?? "");
-  const [date, setDate] = useState(initial ? toLocalInput(initial.departure) : "");
+  const [date, setDate] = useState(initial ? toThaiInput(initial.departure) : "");
   const [busy, setBusy] = useState(false);
 
   function place(p: Place) {
@@ -230,7 +236,7 @@ export default function PlanTrip({
                   origin: pt(origin!),
                   destination: pt(dest!),
                   stops: stops.map(pt),
-                  departure: new Date(date).toISOString().replace(/\.\d{3}Z$/, "Z"),
+                  departure: thaiInputToUtc(date),
                 });
               } catch (e) {
                 setError((e as Error).message);
