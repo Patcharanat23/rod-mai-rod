@@ -13,9 +13,14 @@ async function forward(req: NextRequest) {
   }
   const url = base + req.nextUrl.pathname + req.nextUrl.search;
   const headers: Record<string, string> = { "content-type": req.headers.get("content-type") || "application/json" };
-  for (const h of ["authorization", "x-request-id"]) {
+  for (const h of ["authorization", "x-request-id", "x-forwarded-for"]) {
     const v = req.headers.get(h);
     if (v) headers[h] = v;
+  }
+  // api-backend จำกัดจำนวนครั้ง login ต่อ IP ต้องส่ง IP ผู้ใช้จริงไป ไม่งั้นทุกคนนับเป็น IP ของ web
+  if (!headers["x-forwarded-for"]) {
+    const ip = req.headers.get("x-real-ip");
+    if (ip) headers["x-forwarded-for"] = ip;
   }
   const timeoutMs = req.nextUrl.pathname.startsWith("/api/v1/assistant/chat") ? 120_000 : 60_000;
 
@@ -27,10 +32,14 @@ async function forward(req: NextRequest) {
       signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });
-    const res = new Response(await upstream.text(), {
+    // ภาพแผนที่ (เช่น ชั้นน้ำท่วมจากดาวเทียม) ส่งต่อเป็นไฟล์ ไม่ใช่ข้อความ
+    const type = upstream.headers.get("content-type") || "application/json";
+    const binary = type.startsWith("image/");
+    const res = new Response(binary ? await upstream.arrayBuffer() : await upstream.text(), {
       status: upstream.status,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": binary ? type : "application/json" },
     });
+    if (binary) res.headers.set("cache-control", upstream.headers.get("cache-control") || "public, max-age=1800");
     const rid = upstream.headers.get("x-request-id");
     if (rid) res.headers.set("X-Request-ID", rid);
     return res;
