@@ -17,12 +17,13 @@
 | Weather & Disaster | `services/weather-disaster/` | `weather-disaster` | 8000 | 8003 |
 | Risk & Decision | `services/risk-decision/` | `risk-decision` | 8000 | 8004 |
 | Assistant Agent | `services/assistant-agent/` | `assistant-agent` | 8000 | 8005 |
+| Safety Knowledge | `services/safety-knowledge/` | `safety-knowledge` | 8000 | 8006 |
 | Postgres | - | `postgres` | 5432 | 5433 (กันชนกับ Postgres ที่ลงไว้ในเครื่อง) |
 
 **กฎสำคัญที่สุดของตารางนี้**
 
 - service คุยกันเองใน Docker ใช้ `http://<ชื่อ host>:8000` เสมอ เช่น `http://routing-engine:8000` **ไม่ใช่** `routing-engine:8002`
-- พอร์ต 8001 ถึง 8005 มีไว้ยิง curl ทดสอบจากเครื่องตัวเองเท่านั้น ห้ามเขียนลงในโค้ด
+- พอร์ต 8001 ถึง 8006 มีไว้ยิง curl ทดสอบจากเครื่องตัวเองเท่านั้น ห้ามเขียนลงในโค้ด
 - ห้าม hardcode URL ของ service อื่นในโค้ด ให้อ่านจาก env ตามชื่อใน `.env.example` เช่น `ROUTING_ENGINE_URL`
 - ห้ามใช้ `localhost` เรียก service อื่น (ใน container `localhost` คือตัวมันเอง)
 
@@ -33,6 +34,8 @@ browser ──> web (Next.js) ──> api-backend            ทางเดี�
 api-backend ──> routing-engine ──> risk-decision ──> weather-disaster
 api-backend ──> weather-disaster                      สภาพอากาศแบบ area + หมุด Safety Map
 api-backend ──> assistant-agent ──> api-backend       assistant แก้ทริปผ่าน api-backend เท่านั้น
+assistant-agent ──> safety-knowledge                  ค้นคำแนะนำความปลอดภัยมาตอบในแชท
+api-backend ──> safety-knowledge                      คำแนะนำฉุกเฉินให้หน้าเว็บ
 api-backend ──> postgres                              มีแค่ api-backend ที่แตะฐานข้อมูล
 ```
 
@@ -85,16 +88,29 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 |---|---|
 | web ไป api-backend (ทั่วไป) | 60 วินาที |
 | web ไป api-backend (`/assistant/chat` เท่านั้น) | 120 วินาที |
-| api-backend ไป routing-engine | 45 วินาที |
-| api-backend ไป weather-disaster | 10 วินาที |
+| api-backend ไป routing-engine | 45 วินาที (`/trips/{id}/departures` ถาม +3 และ +6 ชม. พร้อมกัน ครั้งละ 45 วินาที) |
+| api-backend ไป weather-disaster | 10 วินาที (`/forecast/route` 20 วินาที เพราะส่งหลายจุด) |
+| api-backend ไป บริการค้นสถานที่ (Photon) | 5 วินาที |
+| api-backend ไป Overpass (สถานที่เที่ยวใกล้ตัว) | 8 วินาที (ไม่ทันโหลดต่อเบื้องหลังได้ถึง 30 วินาที, Overpass ตอบ error ใช้ Photon ค้นตามหมวดแทน 8 วินาที) |
+| weather-disaster ไป GISTDA (น้ำท่วมจากดาวเทียม) | 30 วินาทีต่อหน้า ทำเบื้องหลังเท่านั้น ห้ามเรียกระหว่างคำขอของผู้ใช้ |
 | routing-engine ไป risk-decision | 30 วินาที |
 | risk-decision ไป weather-disaster | 10 วินาทีต่อครั้ง |
 | weather-disaster ไป API ภายนอก | 8 วินาทีต่อครั้ง ยิงหลายแหล่งพร้อมกัน ไม่ใช่ทีละแหล่ง |
 | api-backend ไป assistant-agent | 100 วินาที |
 | assistant-agent ไป LLM | 30 วินาทีต่อครั้ง |
 | assistant-agent ไป api-backend | 60 วินาที (เพราะอาจเรียก `/plan` ต่อ) |
+| assistant-agent / api-backend ไป safety-knowledge | 10 วินาที |
 
 ตัวในต้องสั้นกว่าตัวนอกเสมอ ไม่งั้นตัวนอกจะตัดสายก่อนตัวในตอบ
+
+### จำกัดจำนวนครั้ง (api-backend)
+
+| เส้น | จำกัด | นับตาม |
+|---|---|---|
+| `POST /auth/login` | 10 ครั้งต่อนาที | IP ผู้ใช้ (`X-Forwarded-For` ตัวแรก) กันเดารหัสผ่าน |
+| `POST /assistant/chat` | 10 ข้อความต่อนาที | ผู้ใช้ที่ login กันโควตา LLM ฟรีหมด |
+
+เกินได้ `RATE_LIMITED` (429) "ส่งคำขอถี่เกินไป รอสักครู่แล้วลองใหม่" · **web ต้องส่ง `X-Forwarded-For` ต่อให้ api-backend เสมอ** (ตัวส่งต่อใน `app/api/v1/[...path]/route.ts` ทำให้แล้ว) ไม่งั้นทุกคนนับเป็น IP ของ web แล้วโดนล็อกพร้อมกัน
 
 **เรียก service อื่นด้วย `call()` ใน `envelope.py` เท่านั้น** เช่น `call("ROUTING_ENGINE_URL", "POST", "/api/v1/routes/plan", timeout=45, json=...)`
 มันอ่าน URL จาก env, ส่ง `X-Request-ID` ต่อ, คืนค่า `data` ให้เลย และถ้าพังจะ raise `ApiError` ที่เป็น `UPSTREAM_TIMEOUT` / `UPSTREAM_ERROR` หรือ code เดิมของปลายทาง
@@ -118,6 +134,8 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | `plan_status` | `"NONE"` / `"FRESH"` / `"STALE"` | | ยังไม่เคยแพลน / แผนล่าสุด / ทริปถูกแก้หลังแพลน ต้องแพลนใหม่ |
 | `severity` (ของหมุดภัย) | `"LOW"` / `"MEDIUM"` / `"HIGH"` | | MEDIUM = ระดับเฝ้าระวัง, HIGH = ระดับรุนแรงหรือให้อพยพ ตรงกับเกณฑ์ด้านล่าง |
 | หมุดระหว่างทาง | ไม่เกิน 5 จุดต่อทริป | | api-backend ตรวจ frontend จำกัดตั้งแต่ฟอร์ม |
+| `departure_time` ตอนสร้าง/แก้ทริป | ย้อนหลังได้ไม่เกิน 1 ชม. | | เกินได้ `VALIDATION_ERROR` "เวลาออกเดินทางผ่านไปแล้ว เลือกเวลาในอนาคต" (ทริปย้อนหลังไม่มีพยากรณ์ให้ประเมิน) |
+| ต้นทาง = ปลายทาง | ห่างกันน้อยกว่า 0.5 กม. และไม่มีจุดแวะ | | `VALIDATION_ERROR` "ต้นทางกับปลายทางเป็นที่เดียวกัน" (มีจุดแวะ = ทริปวนกลับที่เดิม ทำได้) |
 | `recommendation` | `"NORMAL"` / `"DELAY"` / `"REROUTE"` / `"AVOID"` | | risk-decision เป็นคนตัดสิน |
 | `hazard_type` | `RAIN` `HEAVY_RAIN` `STRONG_WIND` `FLOOD` `LANDSLIDE_RISK` `STORM` `EARTHQUAKE` | | frontend มีไอคอนครบทุกตัว + ไอคอนสำรองสำหรับค่าที่ไม่รู้จัก |
 | `waypoint.kind` | `"ORIGIN"` / `"STOP"` / `"DESTINATION"` | | แท็บขวาของ My Trip แสดงครบทุกจุดรวมต้นทางและปลายทาง |
@@ -171,7 +189,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | Method | Path | ใช้ทำอะไร |
 |---|---|---|
 | POST | `/api/v1/auth/register` | สมัคร `{email, password}` |
-| POST | `/api/v1/auth/login` | ได้ `{token, user}` |
+| POST | `/api/v1/auth/login` | ได้ `{token, user}` รหัสผิดทุกแบบ (รวมสั้นกว่า 6 ตัว) ได้ `UNAUTHORIZED` "อีเมลหรือรหัสผ่านไม่ถูกต้อง" |
 | GET | `/api/v1/me` | ข้อมูลผู้ใช้ที่ login อยู่ |
 | GET | `/api/v1/trips` | ทริปทั้งหมดของผู้ใช้ เรียงตามเวลาออกเดินทาง |
 | GET | `/api/v1/trips/upcoming` | ทริปถัดไปที่ยังไม่ถึงเวลาออก หรือ `null` (ใช้ในหน้า Overview) |
@@ -180,9 +198,15 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 | PATCH | `/api/v1/trips/{trip_id}` | แก้บาง field (เวลา ต้นทาง ปลายทาง หมุด) แก้แล้วแผนเดิมถือว่าเก่า `plan_status: "STALE"` |
 | DELETE | `/api/v1/trips/{trip_id}` | ลบทริป |
 | POST | `/api/v1/trips/{trip_id}/plan` | คำนวณแผน ได้ `TripPlan` (ด้านล่าง) |
+| GET | `/api/v1/trips/{trip_id}/departures` | ถ้าเลื่อนเวลาออก +3 / +6 ชม. ได้ `{"departures": [{offset_h, risk_level, risk_score, recommendation}]}` ไม่บันทึกอะไร เวลาที่ถามไม่ได้ข้ามไป (การ์ด "ออกเวลาไหนดี" หน้าทริป) |
+| POST | `/api/v1/forecast/route` | `{geometry[], departure_time, duration_min}` พยากรณ์ ณ เวลาที่รถผ่าน เก็บจุดทุก 15 กม. ตามเส้น ได้รูปแบบเดียวกับ `POST /forecast/points` ของ weather-disaster (วงฝนตามเส้นทางหน้าทริป) ทริปที่ออกไปแล้วก็ถามได้ |
+| GET | `/api/v1/maps/flood/{window}/{z}/{x}/{y}` | ภาพชั้นน้ำท่วม GISTDA (PNG) `window` = `1day` `3days` `7days` `30days` ส่งต่อพร้อม key ฝั่ง server **key ห้ามถึงหน้าเว็บ** |
 | GET | `/api/v1/weather/area?lat=&lng=` | สภาพอากาศแบบพื้นที่รอบจุด (ใช้ตอนยังไม่มีทริป) |
-| GET | `/api/v1/hazards?min_lat=&min_lng=&max_lat=&max_lng=` | หมุดภัยในกรอบแผนที่ (Safety Map) |
+| GET | `/api/v1/hazards?min_lat=&min_lng=&max_lat=&max_lng=` | หมุดภัยในกรอบแผนที่ (Safety Map) กรอบกลับด้าน (min > max) ได้ `VALIDATION_ERROR` |
 | POST | `/api/v1/assistant/chat` | `{message, history[]}` ได้ `ChatReply` |
+| GET | `/api/v1/safety/emergency?hazard_type=` | คำแนะนำฉุกเฉินของภัยชนิดนั้น ได้ `Emergency` (แสดงเมื่อเส้นทางหรือหมุดภัยเป็น HIGH) |
+| GET | `/api/v1/places/search?q=` | ค้นสถานที่ในไทยจากชื่อที่พิมพ์ (ช่องปักหมุดในฟอร์มทริป) ได้ `{"places": [Place...]}` ไม่เกิน 5 ตัว (รูปแบบด้านล่าง) |
+| GET | `/api/v1/places/nearby?lat=&lng=[&radius_km=&kinds=]` | สถานที่เที่ยวใกล้ตำแหน่ง ได้ `{"places": [NearbyPlace...]}` เรียงจากใกล้ไปไกล ไม่ส่ง `radius_km`/`kinds` = 5 กม. ไม่เกิน 8 ตัว (แบบเดิม) ส่ง = รัศมี 1-20 กม. ไม่เกิน 15 ตัว (หน้าหลักใช้ 20 กม. แชทใช้ตามแนวที่ผู้ใช้ขอ) |
 
 ### routing-engine
 
@@ -202,13 +226,20 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 |---|---|---|
 | POST | `/api/v1/forecast/points` | `{points: [{lat, lng, time}]}` ได้ `{points: [{lat, lng, forecast}], warnings}` **เรียงตามลำดับที่ส่งมา จำนวนเท่ากัน** จุดที่ไม่มีข้อมูลให้ `forecast: null` |
 | GET | `/api/v1/area?lat=&lng=` | สภาพอากาศเป็นตาราง 3x3 จุดรอบตำแหน่ง ห่างกันประมาณ 25 กม. |
-| GET | `/api/v1/hazards?min_lat=&min_lng=&max_lat=&max_lng=` | หมุดภัยในกรอบ |
+| GET | `/api/v1/hazards?min_lat=&min_lng=&max_lat=&max_lng=` | หมุดภัยในกรอบ เปิด GISTDA อยู่มี `flood_window` (`"3days"` / `"7days"` / `null`) บอกชุดน้ำท่วมที่ใช้ หน้าเว็บใช้ชั้นภาพชุดเดียวกัน |
 
 ### assistant-agent
 
 | Method | Path | ใช้ทำอะไร |
 |---|---|---|
 | POST | `/api/v1/chat` | `{message, history[]}` + header `Authorization` ของผู้ใช้ ได้ `ChatReply` |
+
+### safety-knowledge
+
+| Method | Path | ใช้ทำอะไร |
+|---|---|---|
+| POST | `/api/v1/safety/search` | `{query, hazard_types[], limit}` ได้ `{results: [{doc_id, title_th, snippet_th, source}], warnings}` ไม่เจอได้ `results: []` |
+| GET | `/api/v1/safety/emergency?hazard_type=` | ได้ `Emergency` hazard_type ที่ไม่รู้จักได้ `VALIDATION_ERROR` ยังไม่มีคำแนะนำได้ `NOT_FOUND` |
 
 ### ตัวอย่างข้อมูลที่ใช้ร่วมกัน
 
@@ -256,8 +287,47 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
   "province": "นครสวรรค์", "title_th": "น้ำท่วมขังหลายพื้นที่", "source": "GDACS", "updated_at": "2026-09-24T03:00:00Z" }
 ```
 
-`source` ที่ใช้ได้: `OPEN_METEO`, `GDACS`, `USGS`, `THAIWATER`, `TMD`, `DERIVED` (ประเมินเองจากข้อมูลอื่น เช่น เสี่ยงดินถล่มจากฝนสะสม ต้องบอกผู้ใช้ว่าเป็นการประเมิน)
+`Emergency`
+
+```json
+{ "hazard_type": "FLOOD", "steps_th": ["อย่าขับผ่านน้ำที่มองไม่เห็นผิวถนน"],
+  "contacts": [{ "name_th": "สายด่วนนิรภัย ปภ.", "phone": "1784" }] }
+```
+
+`province` เป็น `null` ได้ เมื่อแหล่งข้อมูลไม่บอกจังหวัด (GDACS, USGS) หน้าเว็บต้องซ่อนส่วนนั้น ห้ามแสดงคำว่า null
+
+`source` ของ Hazard ที่ใช้ได้: `OPEN_METEO`, `GDACS`, `USGS`, `GISTDA`, `THAIWATER`, `TMD`, `DERIVED` (ประเมินเองจากข้อมูลอื่น เช่น เสี่ยงดินถล่มจากฝนสะสม ต้องบอกผู้ใช้ว่าเป็นการประเมิน)
+
+หมุด `source: GISTDA` (น้ำท่วมจากดาวเทียม รวมช่องที่ท่วมเป็น 1 หมุดต่อตำบล) มีเพิ่ม `road_cells: [[lat, lng], ...]` = ช่องที่มีถนนท่วมจริง
+- `severity` ตัดสินจากความยาวถนนที่ท่วมในตำบลเท่านั้น: 1 กม. ขึ้นไป `HIGH` · มากกว่า 0 `MEDIUM` · ไม่มีถนนท่วม (ท่วมนา) `LOW`
+- ใช้ชุด 3 วันล่าสุดก่อน ถ้าว่าง (ดาวเทียมยังไม่มีภาพใหม่) ใช้ชุด 7 วัน · ไม่มี `GISTDA_API_KEY` = ไม่มีหมุดชนิดนี้ ไม่ใช่ error
 คำตอบของ `GET /hazards`: `{"hazards": [Hazard...], "warnings": []}`
+
+หมุด `source: OPEN_METEO` (`RAIN`, `HEAVY_RAIN`, `STRONG_WIND`) คือ**อากาศชั่วโมงนี้** มีไว้ให้ Safety Map แสดงว่าตอนนี้ฝนตก/ลมแรงที่ไหน ระดับ `severity` ใช้เกณฑ์ฝน/ลมในหัวข้อ 4 (ฝนเบา 2 ถึง 10 มม./ชม. เป็น `RAIN` LOW) **risk-decision ต้องข้ามหมุดชนิดนี้** เพราะใช้พยากรณ์ ณ เวลาที่ไปถึงอยู่แล้ว ถ้านับซ้ำจะได้ความเสี่ยงของ "ตอนนี้" แทน "ตอนที่ไปถึง"
+
+`Place` (คำตอบของ `GET /places/search`)
+
+```json
+{ "places": [ { "name": "กรุงเทพมหานคร", "detail": "กรุงเทพมหานคร", "lat": 13.7525, "lng": 100.4935 } ] }
+```
+
+- `q` สั้นกว่า 2 ตัวอักษรได้ `VALIDATION_ERROR` · ไม่เจอได้ `places: []` · ทุกผลต้องอยู่ในประเทศไทย
+- คำย่อที่คนไทยพิมพ์บ่อยต้องเจอ เช่น `กทม` > กรุงเทพมหานคร, `โคราช` > นครราชสีมา
+- บริการค้นสถานที่ล่มหรือช้าได้ `UPSTREAM_ERROR` / `UPSTREAM_TIMEOUT` หน้าเว็บบอกผู้ใช้ให้ปักหมุดบนแผนที่แทน ห้ามค้าง
+- ใช้ Photon (`photon.komoot.io`) ซึ่งอนุญาตให้ค้นแบบพิมพ์ไปเจอไป ห้ามใช้ Nominatim ทำแบบนี้ (ผิดเงื่อนไขการใช้งานของเขา)
+
+`NearbyPlace` (คำตอบของ `GET /places/nearby`) = `Place` + `kind_th`
+
+`kinds` (คั่นด้วยจุลภาค ไม่ส่ง = `attraction`): `attraction` วัด พิพิธภัณฑ์ อนุสาวรีย์ จุดชมวิว · `cafe` · `market` ตลาด ถนนคนเดิน · `park` · `mall` · `nightlife` บาร์ ผับ · `waterfall` น้ำตก หมวดที่ไม่รู้จักหรือรัศมีนอก 1-20 ได้ `VALIDATION_ERROR`
+
+```json
+{ "places": [ { "name": "ประตูท่าแพ", "detail": null, "lat": 18.7877, "lng": 98.9933, "kind_th": "สถานที่ท่องเที่ยว" } ] }
+```
+
+- ดึงจาก Overpass (OpenStreetMap) ครั้งเดียวต่อคำขอ ใช้กรอบสี่เหลี่ยม (`[bbox:...]`) แล้วตัดตามรัศมีจริงทีหลัง: `tourism` = attraction / viewpoint / museum / zoo / theme_park และ `historic` = monument / temple / ruins ที่มีชื่อ ใช้ `name:th` ถ้ามี
+- Overpass ตอบ error (504/429) ใช้ Photon ค้นตามหมวดแทน (เก็บ cache แค่ 1 ชม.) และข้าม Overpass ไป 5 นาที · Overpass ตอบ 200 แต่มี `remark` ว่าหมดเวลา ถือว่าพัง ห้ามเก็บลง cache ว่า "ไม่มีที่เที่ยว"
+- **ประหยัดโควตา**: รัศมี 5 กม. ไม่เกิน 8 ตัว cache ตามพิกัดที่ปัดเป็นทศนิยม 2 ตำแหน่ง (ประมาณ 1 กม.) นาน 24 ชม. ไม่เรียก LLM
+- นอกประเทศไทยได้ `OUT_OF_THAILAND` · Overpass ล่มหรือช้าได้ `UPSTREAM_ERROR` / `UPSTREAM_TIMEOUT` หน้าเว็บแสดงแผนที่และอากาศต่อไปโดยไม่มีหมุดสถานที่ ห้ามทำให้ทั้งการ์ดพัง
 
 คำตอบของ `GET /weather/area` และ `GET /area`
 
@@ -270,8 +340,11 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 คำขอและคำตอบของ `POST /risk/evaluate` (routing-engine ส่งทุกเส้นในครั้งเดียว risk-decision ลองเลื่อนเวลาออก 3 และ 6 ชม. เองเพื่อตัดสิน `DELAY`)
 
 ```json
-{ "routes": [ { "route_id": "r1", "duration_min": 540, "points": [ { "lat": 13.75, "lng": 100.5, "eta": "2026-09-28T01:00:00Z" } ] } ] }
+{ "routes": [ { "route_id": "r1", "duration_min": 540, "points": [ { "lat": 13.75, "lng": 100.5, "eta": "2026-09-28T01:00:00Z" } ],
+                "geometry": [ { "lat": 13.75, "lng": 100.5 } ] } ] }
 ```
+
+`geometry` ไม่บังคับ (routing-engine ส่งเส้นเต็มมาด้วย) มี `geometry` แล้ว หมุดน้ำท่วม GISTDA นับว่าโดนเส้นทางก็ต่อเมื่อเส้นทางผ่านห่างช่อง `road_cells` ไม่เกิน 0.5 กม. (ใส่ไว้ที่จุดตรวจที่ใกล้ที่สุด) ไม่มี `geometry` ใช้รัศมีแบบเดิม
 
 ```json
 { "routes": [ { "route_id": "r1", "risk_level": "MEDIUM", "risk_score": 41,
@@ -282,10 +355,12 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 
 ## 7. กฎฝั่ง frontend (3 คนทำในแอปเดียวกัน)
 
-- เจ้าของโมดูล 1 เป็นคนสร้างโปรเจกต์ Next.js ครั้งแรก และดูแล `package.json`, lockfile, `next.config`, `app/layout`, และ `apps/web/shared/`
+- เจ้าของโมดูล 1 ดูแล `package.json`, lockfile, `next.config`, `app/layout`, `app/globals.css`, หน้าหลัก (`app/page.tsx`), `app/login`, `components/` ที่ใช้ร่วมกัน (`Shell`, `Icon`, `Map`, `MapView`, `ui`, แชทลอย `ChatFab` + `ChatDrawer`), `lib/` ทั้งหมด และ `public/assets`
+- โมดูล 2 ดูแล `app/trips` + `components/PlanTrip.tsx` + `components/trip.tsx` · โมดูล 3 ดูแล `app/map` + `app/assistant` · โมดูล 9 ดูแล `app/emergency`
+- หน้าตาตามแบบในเครื่องเจ้าของโปรเจกต์ (ภาพตัวอย่างอยู่ที่ `public/assets/showcase/`) สีและขนาดใช้ตัวแปรใน `globals.css` เท่านั้น ห้ามใส่สีตายตัวในหน้า
 - คนอื่นอยากเพิ่ม package ให้บอกเจ้าของโมดูล 1 ก่อน ห้ามต่างคนต่างลง แล้วห้ามแก้ lockfile ด้วยมือตอน conflict
 - browser เรียก `/api/v1/...` แบบ relative path แล้วให้ Next.js ส่งต่อไปที่ `API_INTERNAL_URL` ฝั่ง server (เลี่ยงปัญหา CORS ทั้งหมด) ใช้ route handler `app/api/v1/[...path]/route.ts` ที่อ่าน env ตอนรัน **ไม่ใช้ `rewrites` ใน `next.config`** เพราะค่านั้นถูกฝังตอน build แล้วใน Docker จะชี้ผิดที่
-- แผนที่ใช้ Leaflet (`react-leaflet`) ตัวเดียวทั้งเว็บ ผ่าน component กลาง `shared/MapView` ห้ามใครลงไลบรารีแผนที่ตัวอื่นเพิ่ม
+- แผนที่ใช้ Leaflet (`react-leaflet`) ตัวเดียวทั้งเว็บ ผ่าน component กลาง `components/Map` (โหลด `MapView` แบบไม่ทำตอน server) ห้ามใครลงไลบรารีแผนที่ตัวอื่นเพิ่ม
 - แปลงเวลาเป็นเวลาไทยด้วย `timeZone: "Asia/Bangkok"` ทุกครั้ง ห้ามพึ่ง timezone ของเครื่องที่เปิดเว็บ
 - ทุกการ์ดและแผนที่ที่ดึงข้อมูลต้องมี 3 สถานะ: กำลังโหลด / โหลดไม่สำเร็จพร้อมปุ่มลองใหม่ / ไม่มีข้อมูล
 
@@ -299,12 +374,15 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 ## 9. Hosting
 
 - นำเสนอด้วย `docker compose up` บนเครื่องที่ใช้ demo เป็นหลัก
-- ถ้าอยากมีลิงก์ให้คนนอกดู deploy เฉพาะ `apps/web` ขึ้น Vercel ทีหลังได้ แต่ต้องมี api-backend ที่เข้าถึงได้จากภายนอกด้วย ซึ่งยังไม่อยู่ในแผน
+- ลิงก์ให้คนนอกใช้: Render ตาม `render.yaml` ทั้งระบบเป็น web service เดียว (`deploy/render/Dockerfile` รวมบริการ Python 6 ตัวบน `127.0.0.1:8001-8006` + หน้าเว็บที่พอร์ต `$PORT`) + Render Postgres วิธีทำอยู่ใน `deploy/render/README.md`
+- บริการใหม่ต้องรันได้ทั้งใน docker compose (`http://<ชื่อบริการ>:8000`) และใน container เดียวของ Render (`http://127.0.0.1:800x`) อ่านที่อยู่จาก env เท่านั้น ห้ามเขียนตายตัว
 
 ## 10. LLM (assistant-agent และ risk-decision ถ้าใช้เขียนคำอธิบาย)
 
 - ใช้ไลบรารี `openai` ตัวเดียว เปลี่ยนผู้ให้บริการด้วย `base_url` เท่านั้น
-- ตัวหลัก Groq ตัวสำรอง Gemini/OpenAI ชื่อโมเดลอ่านจาก env เสมอ
+- ลำดับผู้ให้บริการ: `LLM_PRIMARY` แล้ว `LLM_FALLBACK` (ใส่หลายตัวคั่นด้วยจุลภาคได้ เช่น `gemini,groq2`) ตัวละ `<ชื่อ>_API_KEY` `<ชื่อ>_MODEL` `<ชื่อ>_BASE_URL` ชื่อโมเดลอ่านจาก env เสมอ ค่าที่ใช้อยู่ดู `.env.example`
+- คำสั่งระบบทั้งหมด (prompt + ข้อมูลทริป + เอกสาร) ต้องรวมเป็น `system` **ข้อความเดียว** เพราะ Gemini อ่านแค่ system อันสุดท้าย
+- Gemini 3 ต้องได้ `extra_content` (thought_signature) ของ tool call คืนไปด้วยทุกครั้ง ไม่งั้นรอบถัดไปตอบ 400
 - ตอน dev แต่ละคนใช้ key ของตัวเอง key กลางเก็บไว้ใช้วันนำเสนอ
 - การตัดสินใจเรื่องความเสี่ยงต้องมาจากกฎในหัวข้อ 4 เสมอ LLM มีหน้าที่แค่เรียบเรียงคำอธิบาย ห้ามให้ LLM ตัดสินระดับความเสี่ยงเอง
 
@@ -314,7 +392,7 @@ frontend ต้องแสดงแถบแจ้งเตือนตาม w
 - `dev` เป็น branch รวมงาน merge เข้าต้องมี 1 approval
 - ห้าม push ตรงเข้า `main` หรือ `dev`
 - ทุกคนทำงานใน branch ของตัวเอง แตกจาก `dev`: `feature/<module-slug>/<ชื่อ>` เช่น `feature/routing-engine/somchai`
-  module-slug: `web-overview`, `web-mytrip`, `web-safety-assistant`, `api-backend`, `routing-engine`, `weather-disaster`, `risk-decision`, `assistant-agent`
+  module-slug: `web-overview`, `web-mytrip`, `web-safety-assistant`, `api-backend`, `routing-engine`, `weather-disaster`, `risk-decision`, `assistant-agent`, `safety-knowledge`
 - commit: `<type>(<module-slug>): <ทำอะไร>` type คือ `feat` `fix` `test` `docs` `refactor` `chore`
 - **ตอนเปิด PR ช่อง base จะเด้งเป็น `main` เสมอ (เพราะ `main` เป็น default) ต้องเปลี่ยนเป็น `dev` เองทุกครั้ง** ถ้าลืม PR จะติดกฎ 2 approval ของ `main` และถูกปิดให้เปิดใหม่
 - เจ้าของโปรเจกต์รีวิวทุก PR ก่อนเข้า `dev` และ `main` (เป็น code owner คนเดียวใน `.github/CODEOWNERS` GitHub จึงไม่ยอมให้ merge จนกว่าเขาจะ approve)

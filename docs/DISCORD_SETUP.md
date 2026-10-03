@@ -1,5 +1,12 @@
 # ตั้งค่า Discord สำหรับอัปเดตงาน (PR + แจกงาน + แจ้งผลรีวิว)
 
+> **ตั้งค่าเสร็จแล้ว** ในเซิร์ฟเวอร์ของทีม ทุกคนไม่ต้องทำอะไร
+> - PR เปิด/ปิด/merge เด้งเข้า `#pull-requests`
+> - ผลรีวิว PR เด้งเข้าห้องโมดูลของตัวเองในหมวด `rod-mai-rod` (`#01-web-overview` ถึง `#09-safety-knowledge`)
+> - ถ้าไม่เด้ง ส่วนใหญ่คือชื่อ branch ไม่ใช่ `feature/<module-slug>/<ชื่อ>` เป๊ะ ดูแท็บ Actions ใน GitHub
+>
+> ขั้นตอนด้านล่างเก็บไว้เผื่อต้องตั้งใหม่
+
 เป้าหมาย 3 อย่าง:
 1. ห้อง **#pr-updates** - เห็นทุกครั้งที่มีใครเปิด/ปิด/merge PR (อัตโนมัติ ไม่ต้องเขียนโค้ด)
 2. ห้อง **#task-assignment** - ไว้แจกงานให้แต่ละคน (ห้องธรรมดา ใช้มือโพสต์)
@@ -12,7 +19,7 @@
 สร้างห้องตามนี้ (ตั้งชื่อห้องให้ตรงกับ module-slug จะได้ไม่งง):
 - `#pr-updates`, `#task-assignment` (ทุกคนเห็น)
 - `#pr-web-overview`, `#pr-web-mytrip`, `#pr-web-safety-assistant`
-- `#pr-api-backend`, `#pr-routing-engine`, `#pr-weather-disaster`, `#pr-risk-decision`, `#pr-assistant-agent`
+- `#pr-api-backend`, `#pr-routing-engine`, `#pr-weather-disaster`, `#pr-risk-decision`, `#pr-assistant-agent`, `#pr-safety-knowledge`
 
 ## ขั้นที่ 2 - ต่อ `#pr-updates` กับ GitHub (ไม่ต้องเขียนโค้ด)
 
@@ -22,7 +29,7 @@
 
 ## ขั้นที่ 3 - ห้องส่วนตัวแต่ละโมดูลแจ้งผลรีวิวอัตโนมัติ
 
-ทำซ้ำ 8 รอบ (หนึ่งรอบต่อหนึ่งโมดูล):
+ทำซ้ำ 9 รอบ (หนึ่งรอบต่อหนึ่งโมดูล):
 
 1. เข้าห้องโมดูลนั้น → Edit Channel → Integrations → Webhooks → New Webhook → Copy URL (**ไม่ต้อง** เติม `/github`)
 2. GitHub repo → Settings → Secrets and variables → Actions → New repository secret

@@ -23,7 +23,7 @@ ps:
 	docker compose ps
 
 health:
-	@for p in 3000 8001 8002 8003 8004 8005; do \
+	@for p in 3000 8001 8002 8003 8004 8005 8006; do \
 		printf "port $$p  "; \
 		curl -s --max-time 3 http://localhost:$$p/health || printf "FAILED"; \
 		echo ""; \

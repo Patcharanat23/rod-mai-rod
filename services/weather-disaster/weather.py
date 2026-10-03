@@ -1,0 +1,288 @@
+"""Hourly forecast from Open-Meteo for points along a route."""
+import json
+import math
+import os
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import httpx
+
+from geo import haversine_km, to_iso
+
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+HOURLY_VARS = "precipitation,wind_speed_10m,temperature_2m,weather_code"
+TIMEOUT_S = 8
+CACHE_TTL_S = 30 * 60
+CACHE_MAX = 5000
+AREA_STEP_KM = 25
+KM_PER_DEG_LAT = 111.32
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+DEMO_MATCH_KM = 15
+
+# WMO weather codes used by Open-Meteo
+WMO_TH = {
+    0: "ท้องฟ้าแจ่มใส",
+    1: "ท้องฟ้าโปร่ง",
+    2: "มีเมฆบางส่วน",
+    3: "เมฆมาก",
+    45: "มีหมอก",
+    48: "มีหมอกน้ำแข็ง",
+    51: "ฝนปรอยเล็กน้อย",
+    53: "ฝนปรอย",
+    55: "ฝนปรอยหนาแน่น",
+    56: "ฝนปรอยเยือกแข็ง",
+    57: "ฝนปรอยเยือกแข็ง",
+    61: "ฝนตกเล็กน้อย",
+    63: "ฝนตกปานกลาง",
+    65: "ฝนตกหนัก",
+    66: "ฝนเยือกแข็ง",
+    67: "ฝนเยือกแข็งหนัก",
+    71: "หิมะตกเล็กน้อย",
+    73: "หิมะตก",
+    75: "หิมะตกหนัก",
+    77: "เกล็ดหิมะ",
+    80: "ฝนตกเป็นช่วงๆ",
+    81: "ฝนตกเป็นช่วงปานกลาง",
+    82: "ฝนตกหนักมาก",
+    85: "หิมะตกเป็นช่วงๆ",
+    86: "หิมะตกหนักเป็นช่วงๆ",
+    95: "พายุฝนฟ้าคะนอง",
+    96: "พายุฝนฟ้าคะนองมีลูกเห็บ",
+    99: "พายุฝนฟ้าคะนองมีลูกเห็บหนัก",
+}
+UNKNOWN_TH = "ไม่ทราบสภาพอากาศ"
+
+
+RAIN_CODES = set(range(51, 68)) | {80, 81, 82}
+THUNDER_CODES = set(range(95, 100))
+
+
+def rain_words(rain: float) -> str:
+    """Wording that matches the CONTRACT rain levels (LOW < 10, MEDIUM 10-35, HIGH > 35)."""
+    if rain < 2.5:
+        return "ฝนเล็กน้อย"
+    if rain < 10:
+        return "ฝนปานกลาง"
+    if rain <= 35:
+        return "ฝนหนัก"
+    return "ฝนหนักมาก"
+
+
+def condition_th(code, rain: float | None = None) -> str:
+    """Short Thai wording. For rain and thunder the amount decides the words, not the code,
+    so the text never says heavy or storm next to a low rain number."""
+    if code is None:
+        return UNKNOWN_TH
+    code = int(code)
+    if rain is not None and code in RAIN_CODES:
+        return rain_words(rain)
+    if rain is not None and code in THUNDER_CODES:
+        return "ฝนฟ้าคะนอง" if rain < 10 else "พายุฝนฟ้าคะนอง"
+    return WMO_TH.get(code, UNKNOWN_TH)
+
+
+def hour_key(t: datetime) -> str:
+    """Floor to the hour in UTC, formatted like Open-Meteo hourly.time with timezone=GMT."""
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00")
+
+
+def fetch_hourly(coords: list[tuple[float, float]]) -> list[dict]:
+    """One request for all coordinates. Returns hourly blocks in the same order."""
+    params = {
+        "latitude": ",".join(f"{lat:.4f}" for lat, _ in coords),
+        "longitude": ",".join(f"{lng:.4f}" for _, lng in coords),
+        "hourly": HOURLY_VARS,
+        "wind_speed_unit": "kmh",
+        "precipitation_unit": "mm",
+        "temperature_unit": "celsius",
+        "timezone": "GMT",
+    }
+    res = httpx.get(OPEN_METEO_URL, params=params, timeout=TIMEOUT_S)
+    res.raise_for_status()
+    body = res.json()
+    # a single location comes back as an object, several as a list
+    locations = body if isinstance(body, list) else [body]
+    if len(locations) != len(coords):
+        raise ValueError("Open-Meteo returned a different number of locations")
+    return [loc["hourly"] for loc in locations]
+
+
+def pick_hour(hourly: dict, t: datetime) -> tuple[dict | None, str | None]:
+    """Forecast for the hour containing t. Returns (forecast, warning)."""
+    times = hourly.get("time") or []
+    key = hour_key(t)
+    if key not in times:
+        return None, "FORECAST_OUT_OF_RANGE"
+    i = times.index(key)
+    try:
+        rain = hourly["precipitation"][i]
+        wind = hourly["wind_speed_10m"][i]
+        temp = hourly["temperature_2m"][i]
+        code = hourly["weather_code"][i]
+    except (KeyError, IndexError, TypeError):
+        return None, "WEATHER_UNAVAILABLE"
+    if rain is None or wind is None or temp is None:
+        return None, "WEATHER_UNAVAILABLE"
+    forecast = {
+        "time": to_iso(datetime.strptime(key, "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc)),
+        "rain_mm_per_h": round(float(rain), 1),
+        "wind_kmh": round(float(wind), 1),
+        "temp_c": round(float(temp), 1),
+        "condition_th": condition_th(code, round(float(rain), 1)),
+    }
+    return forecast, None
+
+
+# rounded coords -> (stored_at, hourly block). One block holds every forecast hour,
+# so a later request for another hour at the same place is still a hit.
+_cache: dict[tuple[float, float], tuple[float, dict]] = {}
+_lock = threading.Lock()
+_now = time.monotonic
+_demo: dict[str, list] = {}  # fixture path -> [(lat, lng, hourly)]
+
+
+def cache_key(lat: float, lng: float) -> tuple[float, float]:
+    """2 decimals is about 1 km; nearby points share one forecast."""
+    return (round(lat, 2), round(lng, 2))
+
+
+def clear_cache() -> None:
+    with _lock:
+        _cache.clear()
+        _demo.clear()
+
+
+def _cache_get(key, now: float) -> dict | None:
+    with _lock:
+        item = _cache.get(key)
+    if item and now - item[0] < CACHE_TTL_S:
+        return item[1]
+    return None
+
+
+def _cache_put(key, hourly: dict, now: float) -> None:
+    with _lock:
+        if len(_cache) >= CACHE_MAX:
+            for k in [k for k, (t, _) in _cache.items() if now - t >= CACHE_TTL_S]:
+                del _cache[k]
+            if len(_cache) >= CACHE_MAX:
+                _cache.clear()
+        _cache[key] = (now, hourly)
+
+
+def demo_mode() -> bool:
+    return os.getenv("DEMO_MODE", "false").lower() == "true"
+
+
+def _demo_points() -> list:
+    path = FIXTURES / "forecast.json"
+    with _lock:
+        if str(path) not in _demo:
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8")).get("points", {})
+            except (OSError, ValueError, AttributeError):
+                raw = {}
+            points = []
+            for key, hourly in raw.items():
+                lat, lng = key.split("_")
+                points.append((float(lat), float(lng), hourly))
+            _demo[str(path)] = points
+        return _demo[str(path)]
+
+
+def shift_to_today(hourly: dict, today: datetime) -> dict:
+    """Move a recorded series so its first day is today; the demo works on any date."""
+    times = hourly.get("time") or []
+    if not times:
+        return hourly
+    fmt = "%Y-%m-%dT%H:%M"
+    first = datetime.strptime(times[0], fmt).replace(hour=0, minute=0, tzinfo=timezone.utc)
+    delta = today.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - first
+    shifted = [(datetime.strptime(t, fmt).replace(tzinfo=timezone.utc) + delta).strftime(fmt) for t in times]
+    return {**hourly, "time": shifted}
+
+
+def demo_hourly(coords: list[tuple[float, float]]) -> list[dict | None]:
+    """Nearest recorded point within DEMO_MATCH_KM, never the network."""
+    recorded = _demo_points()
+    today = datetime.now(timezone.utc)
+    out: list[dict | None] = []
+    for lat, lng in coords:
+        best, best_km = None, DEMO_MATCH_KM
+        for r_lat, r_lng, hourly in recorded:
+            km = haversine_km({"lat": lat, "lng": lng}, {"lat": r_lat, "lng": r_lng})
+            if km <= best_km:
+                best, best_km = hourly, km
+        out.append(shift_to_today(best, today) if best else None)
+    return out
+
+
+def _demo_blocks(keys: list) -> tuple[dict, list[str]]:
+    blocks = {k: h for k, h in zip(keys, demo_hourly(keys)) if h is not None}
+    return blocks, ([] if len(blocks) == len(keys) else ["WEATHER_UNAVAILABLE"])
+
+
+def _live_blocks(keys: list) -> tuple[dict, list[str]]:
+    now = _now()
+    blocks: dict = {}
+    missing = []
+    for key in keys:
+        hourly = _cache_get(key, now)
+        if hourly is None:
+            missing.append(key)
+        else:
+            blocks[key] = hourly
+    if not missing:
+        return blocks, []
+    try:
+        fetched = fetch_hourly(missing)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return blocks, ["WEATHER_UNAVAILABLE"]
+    for key, hourly in zip(missing, fetched):
+        _cache_put(key, hourly, now)
+        blocks[key] = hourly
+    return blocks, []
+
+
+def hourly_blocks(coords: list[tuple[float, float]]) -> tuple[list[dict | None], list[str]]:
+    """Whole hourly series per coordinate, same order, from fixtures or cache or Open-Meteo."""
+    if not coords:
+        return [], []
+    keys = [cache_key(lat, lng) for lat, lng in coords]
+    unique = list(dict.fromkeys(keys))
+    blocks, warnings = _demo_blocks(unique) if demo_mode() else _live_blocks(unique)
+    return [blocks.get(k) for k in keys], warnings
+
+
+def forecast_points(points: list[tuple[float, float, datetime]]) -> tuple[list[dict | None], list[str]]:
+    """Same order and same count as the input. Unknown data is None plus a warning."""
+    if not points:
+        return [], []
+    keys = [cache_key(lat, lng) for lat, lng, _ in points]
+    unique = list(dict.fromkeys(keys))
+    blocks, warnings = _demo_blocks(unique) if demo_mode() else _live_blocks(unique)
+
+    results: list[dict | None] = []
+    for (_, _, t), key in zip(points, keys):
+        hourly = blocks.get(key)
+        if hourly is None:
+            results.append(None)
+            continue
+        forecast, warning = pick_hour(hourly, t)
+        results.append(forecast)
+        if warning and warning not in warnings:
+            warnings.append(warning)
+    return results, warnings
+
+
+def area_grid(lat: float, lng: float) -> list[tuple[float, float]]:
+    """3x3 cells about AREA_STEP_KM apart, south-west first, the centre is index 4."""
+    dlat = AREA_STEP_KM / KM_PER_DEG_LAT
+    # a degree of longitude shrinks towards the poles
+    dlng = AREA_STEP_KM / (KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01))
+    return [
+        (round(lat + dy * dlat, 4), round(lng + dx * dlng, 4))
+        for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+    ]

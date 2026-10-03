@@ -6,11 +6,15 @@
 DEMO_MODE=true ต้องตอบจากข้อมูลที่บันทึกไว้ ไม่เรียกเน็ตเลย
 """
 import os
+import threading
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+import gistda
+import hazard_feeds
+import weather
 from envelope import ApiError, ok, setup
 from geo import to_iso
 
@@ -18,6 +22,15 @@ app = FastAPI(title="weather-disaster")
 setup(app, "weather-disaster")
 
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+
+@app.on_event("startup")
+def warm_hazards():
+    # HAZARD_WARMUP=false turns it off; tests do, so no thread touches the network
+    if os.getenv("HAZARD_WARMUP", "true").lower() == "true":
+        threading.Thread(target=hazard_feeds.keep_warm, daemon=True).start()
+    if not DEMO_MODE and gistda.enabled():
+        threading.Thread(target=gistda.keep_fresh, daemon=True).start()
 
 
 class TimedPoint(BaseModel):
@@ -30,36 +43,36 @@ class PointsIn(BaseModel):
     points: list[TimedPoint]
 
 
-def sample_forecast(time_iso: str) -> dict:
-    return {"time": time_iso, "rain_mm_per_h": 0.2, "wind_kmh": 9, "temp_c": 29, "condition_th": "มีเมฆบางส่วน"}
-
-
 @app.post("/api/v1/forecast/points")
 def forecast_points(body: PointsIn):
-    out = []
     for p in body.points:
         if p.time.tzinfo is None:
             raise ApiError("VALIDATION_ERROR", "time ต้องมี timezone")
-        out.append({"lat": p.lat, "lng": p.lng, "forecast": sample_forecast(to_iso(p.time))})
-    return ok({"points": out, "warnings": []})
+    forecasts, warnings = weather.forecast_points([(p.lat, p.lng, p.time) for p in body.points])
+    out = [{"lat": p.lat, "lng": p.lng, "forecast": fc} for p, fc in zip(body.points, forecasts)]
+    return ok({"points": out, "warnings": warnings})
 
 
 @app.get("/api/v1/area")
 def area(lat: float, lng: float):
-    now = to_iso(datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    grid = weather.area_grid(lat, lng)
+    forecasts, warnings = weather.forecast_points([(g_lat, g_lng, now) for g_lat, g_lng in grid])
+    # the web reads cell.forecast directly, so cells without data are left out
     cells = [
-        {"lat": round(lat + dy * 0.22, 4), "lng": round(lng + dx * 0.22, 4), "forecast": sample_forecast(now)}
-        for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+        {"lat": g_lat, "lng": g_lng, "forecast": fc}
+        for (g_lat, g_lng), fc in zip(grid, forecasts) if fc is not None
     ]
-    return ok({"center": {"lat": lat, "lng": lng}, "cells": cells, "updated_at": now, "warnings": []})
+    return ok({"center": {"lat": lat, "lng": lng}, "cells": cells, "updated_at": to_iso(now), "warnings": warnings})
 
 
 @app.get("/api/v1/hazards")
 def hazards(min_lat: float, min_lng: float, max_lat: float, max_lng: float):
-    now = to_iso(datetime.now(timezone.utc))
-    sample = [
-        {"hazard_id": "gdacs-1", "hazard_type": "FLOOD", "severity": "HIGH", "lat": 15.7047, "lng": 100.1372,
-         "province": "นครสวรรค์", "title_th": "น้ำท่วมขังหลายพื้นที่", "source": "GDACS", "updated_at": now},
-    ]
-    found = [h for h in sample if min_lat <= h["lat"] <= max_lat and min_lng <= h["lng"] <= max_lng]
-    return ok({"hazards": found, "warnings": []})
+    if min_lat > max_lat or min_lng > max_lng:
+        raise ApiError("VALIDATION_ERROR", "กรอบพิกัดไม่ถูกต้อง ค่า min ต้องไม่มากกว่า max")
+    found, warnings = hazard_feeds.get_hazards((min_lat, min_lng, max_lat, max_lng))
+    data = {"hazards": found, "warnings": warnings}
+    if gistda.enabled():
+        # ชุดน้ำท่วม GISTDA ที่ใช้อยู่ หน้าเว็บใช้ชั้นภาพชุดเดียวกัน
+        data["flood_window"] = gistda.window()
+    return ok(data)
