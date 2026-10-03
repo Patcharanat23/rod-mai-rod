@@ -8,6 +8,7 @@ import { Circle, CircleMarker, MapContainer, Marker, Polyline, TileLayer, Toolti
 import { divIcon, latLngBounds, type DivIcon } from "leaflet";
 import Icon from "./Icon";
 import type { LatLng } from "@/lib/data";
+import { useApp } from "@/lib/store";
 
 // segments = ระบายสีแต่ละช่วงของเส้นทางตามระดับความเสี่ยง (lib/segments.ts) ไม่ใส่ = สีเดียวทั้งเส้น
 export type MapRoute = { id: string; points: LatLng[]; color: string; active?: boolean; onClick?: () => void; segments?: { points: LatLng[]; color: string; tip?: string }[] };
@@ -37,7 +38,7 @@ type Props = {
   fit?: LatLng[];
   onClick?: (p: LatLng) => void;
   flyTo?: (LatLng & { zoom?: number }) | null;
-  flood?: boolean | string; // true = ชุด 3 วัน หรือส่งชื่อชุด เช่น "7days"
+  flood?: boolean | string; // true = ชุดที่ระบบใช้อยู่ หรือส่งชื่อชุด เช่น "7days" (GISTDA ยังไม่มีข้อมูล = ไม่แสดง)
   me?: LatLng | null; // ตำแหน่งของผู้ใช้ (จุดฟ้ากะพริบ)
   circle?: { center: LatLng; radiusKm: number; color: string } | null; // วงรัศมี เช่น ที่เที่ยวใน 20 กม. // ชั้นพื้นที่น้ำท่วมจากดาวเทียม GISTDA 3 วันล่าสุด (ผ่าน api-backend key อยู่ฝั่ง server)
   areas?: { id: string; lat: number; lng: number; radiusKm: number; color: string; tip?: string }[]; // วงพื้นที่ เช่น ฝนตามเส้นทาง
@@ -196,14 +197,15 @@ function Clicks({ onClick }: { onClick?: (p: LatLng) => void }) {
   return null;
 }
 
-const floodWindowOf = (f: boolean | string) => (typeof f === "string" ? f : "3days");
 
 export default function MapView({ center = { lat: 13.7563, lng: 100.5018 }, zoom = 6, routes = [], pins = [], dots = [], fit, onClick, flyTo, flood, me, circle, areas = [] }: Props) {
+  const { floodWindow } = useApp();
+  const floodLayer = typeof flood === "string" ? flood : flood ? floodWindow : null;
   const ordered = [...routes].sort((a, b) => Number(!!a.active) - Number(!!b.active));
   return (
     <MapContainer center={[center.lat, center.lng]} zoom={zoom} style={{ height: "100%", width: "100%" }} zoomControl={false} attributionControl>
       <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap" className="base-tiles" />
-      {flood && <TileLayer key={floodWindowOf(flood)} url={`/api/v1/maps/flood/${floodWindowOf(flood)}/{z}/{x}/{y}`} opacity={0.9} zIndex={2} attribution="น้ำท่วม &copy; GISTDA" />}
+      {floodLayer && <TileLayer key={floodLayer} url={`/api/v1/maps/flood/${floodLayer}/{z}/{x}/{y}`} opacity={0.9} zIndex={2} attribution="น้ำท่วม &copy; GISTDA" />}
       {ordered.map((r) => (
         <Polyline
           key={`${r.id}-halo`}
